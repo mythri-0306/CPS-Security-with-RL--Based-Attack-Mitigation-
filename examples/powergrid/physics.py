@@ -7,13 +7,17 @@ PowerGridProcess continuous simulation loop using MiniCPS's state abstraction.
 
 import time
 import sys
-import argparse
-from minicps.devices import Device
+try:
+    from minicps.devices import Device
+except ImportError:
+    class Device(object):
+        def __init__(self, *args, **kwargs):
+            pass
 from utils import (
     STATE, FREQ_TAG, GEN_SETPOINT_TAG, LOAD_DEMAND_TAG,
     SENSOR_FREQ_TAG, CONTROLLER_FREQ_TAG, ATTACK_ACTIVE_TAG,
-    NOMINAL_FREQ, INERTIA_H, PHYSICS_PERIOD_SEC,
-    NOMINAL_LOAD, INITIAL_GEN_SETPOINT
+    NOMINAL_FREQ, INERTIA_H, BASE_POWER_MVA, DAMPING_D,
+    PHYSICS_PERIOD_SEC, NOMINAL_LOAD, INITIAL_GEN_SETPOINT
 )
 from logger import SimulationLogger
 
@@ -21,16 +25,20 @@ from logger import SimulationLogger
 class GridPhysics:
     """Power grid rotational frequency physical model.
 
-    Governed by the swing equation:
-        df/dt = (P_gen - P_load) / (2H)
-    Discretized via Euler integration:
-        f(t + dt) = f(t) + ((P_gen - P_load) / (2H)) * dt
+    Governed by the scaled swing equation:
+        df/dt = (f0 / (2*H)) * ((P_gen - P_load) / S_base) - D * (f - f0)
+    Discretized via forward Euler integration:
+        f(t + dt) = f(t) + df/dt * dt
     """
 
-    def __init__(self, f0=NOMINAL_FREQ, H=INERTIA_H, dt=PHYSICS_PERIOD_SEC,
+    def __init__(self, f0=NOMINAL_FREQ, H=INERTIA_H, S_base=BASE_POWER_MVA,
+                 D=DAMPING_D, dt=PHYSICS_PERIOD_SEC,
                  p_load=NOMINAL_LOAD, p_gen=INITIAL_GEN_SETPOINT):
         self.frequency = float(f0)
+        self.f0 = float(f0)
         self.H = float(H)
+        self.S_base = float(S_base)
+        self.D = float(D)
         self.dt = float(dt)
         self.p_load = float(p_load)
         self.p_gen = float(p_gen)
@@ -46,7 +54,12 @@ class GridPhysics:
         :returns float: Updated grid frequency (Hz)
         """
         self.p_gen = float(generation_setpoint)
-        df_dt = (self.p_gen - self.p_load) / (2.0 * self.H)
+        # 1. Active power mismatch in per-unit (p.u.)
+        delta_p_pu = (self.p_gen - self.p_load) / self.S_base
+        # 2. System load damping effect in Hz
+        damping_hz = self.D * (self.frequency - self.f0)
+        # 3. Scaled swing equation (RoCoF in Hz/s)
+        df_dt = (self.f0 / (2.0 * self.H)) * delta_p_pu - damping_hz
         self.frequency += df_dt * self.dt
         return self.frequency
 
@@ -62,6 +75,8 @@ class PowerGridProcess(Device):
         self.physics = GridPhysics(
             f0=NOMINAL_FREQ,
             H=INERTIA_H,
+            S_base=BASE_POWER_MVA,
+            D=DAMPING_D,
             dt=PHYSICS_PERIOD_SEC,
             p_load=NOMINAL_LOAD,
             p_gen=INITIAL_GEN_SETPOINT

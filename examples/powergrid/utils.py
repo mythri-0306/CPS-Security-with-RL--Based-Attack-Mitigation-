@@ -5,16 +5,20 @@ Defines system parameters, network configuration, Modbus tags,
 scaling factors, and SQLite database schema for state storage.
 """
 
-from minicps.utils import build_debug_logger
+import logging
 
-logger = build_debug_logger(
-    name=__name__,
-    bytes_per_file=100000,
-    rotating_files=2,
-    lformat='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    ldir='logs/',
-    suffix=''
-)
+try:
+    from minicps.utils import build_debug_logger
+    logger = build_debug_logger(
+        name=__name__,
+        bytes_per_file=100000,
+        rotating_files=2,
+        lformat='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        ldir='logs/',
+        suffix=''
+    )
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
 # Physical Process & Control Constants
@@ -29,10 +33,22 @@ SENSOR_PERIOD_SEC = 0.1       # Sensor update period in seconds (100 ms)
 NOMINAL_LOAD = 100.00         # Base load demand P_load
 INITIAL_GEN_SETPOINT = 100.00 # Initial generator setpoint P_gen
 
-# Threshold Control Rule Boundaries
+# Base Power and Damping
+BASE_POWER_MVA = 100.00       # System base power in MVA / MW
+DAMPING_D = 1.0               # Load-frequency damping coefficient D in p.u./Hz (or Hz/s per Hz)
+
+# Threshold Control Rule Boundaries (Baseline #1)
 FREQ_LOW_THRESH = 49.80       # Lower threshold: ramp generation UP if f < 49.8 Hz
 FREQ_HIGH_THRESH = 50.20      # Upper threshold: ramp generation DOWN if f > 50.2 Hz
 RAMP_STEP = 0.50              # Generation setpoint increment/decrement per control cycle (MW)
+
+# Proportional-Integral (PI) / Droop Control Parameters (Baseline #2)
+CONTROLLER_KP = 15.0          # Proportional gain (MW/Hz)
+CONTROLLER_KI = 2.5           # Integral gain (MW/(Hz*s))
+CONTROLLER_DEADBAND_HZ = 0.005 # Insensitive deadband around nominal frequency (Hz)
+
+# Liveness / Communication Loss Thresholds
+TIMEOUT_MAX_CYCLES = 3        # Number of consecutive missed polls before flagging comms loss (0.6s)
 
 # Modbus integer scaling factor (Modbus registers are 16-bit unsigned ints)
 # e.g., 50.00 Hz -> 5000, 100.00 MW -> 10000 (preserves 2 decimal places)

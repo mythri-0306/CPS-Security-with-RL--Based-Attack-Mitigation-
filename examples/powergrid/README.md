@@ -6,15 +6,17 @@ This project implements a Cyber-Physical System (CPS) security testbed simulatin
 
 ## 1. Architecture Overview
 
-### Physical Process (Swing Equation)
-The power grid rotational dynamics are governed by the swing equation:
-$$\frac{df}{dt} = \frac{P_{\text{gen}} - P_{\text{load}}}{2H}$$
+### Physical Process (Scaled Swing Equation)
+The power grid rotational dynamics are governed by the standard scaled swing equation in physical frequency units ($\text{Hz}$):
+$$\frac{df}{dt} = \frac{f_0}{2 H S_{\text{base}}} (P_{\text{gen}} - P_{\text{load}}) - D (f - f_0)$$
 
 Discretized using forward Euler integration with fixed timestep $\Delta t = 0.1\text{ s}$:
-$$f(t + \Delta t) = f(t) + \left(\frac{P_{\text{gen}} - P_{\text{load}}}{2H}\right) \Delta t$$
+$$f(t + \Delta t) = f(t) + \left[ \frac{f_0}{2 H S_{\text{base}}} (P_{\text{gen}} - P_{\text{load}}) - D (f - f_0) \right] \Delta t$$
 
-- Nominal frequency $f_0 = 50.00\text{ Hz}$
+- Nominal grid frequency $f_0 = 50.00\text{ Hz}$
 - Inertia constant $H = 5.0\text{ s}$
+- System base rating $S_{\text{base}} = 100.00\text{ MVA}$
+- Load damping coefficient $D = 1.0\text{ p.u./Hz}$
 - Nominal base load $P_{\text{load}} = 100.00\text{ MW}$
 - Generator setpoint $P_{\text{gen}}$ initialized at $100.00\text{ MW}$
 
@@ -24,10 +26,14 @@ A star topology connects 3 Mininet hosts to OpenFlow/OVS switch `s1`:
    - **Holding Register 0 (`HR 0`)**: Current grid frequency $\times 100$ ($50.00\text{ Hz} \to 5000$).
    - **Holding Register 1 (`HR 1`)**: Generator setpoint $\times 100$ ($100.00\text{ MW} \to 10000$).
 2. **`controller` (`192.168.1.20`)**: Runs a Modbus/TCP client polling `sensor` at $T = 0.2\text{ s}$.
-   - **Threshold Control Rule**:
-     - If $f < 49.80\text{ Hz}$: Ramp generation UP ($P_{\text{gen}} \leftarrow P_{\text{gen}} + 0.50\text{ MW}$).
-     - If $f > 50.20\text{ Hz}$: Ramp generation DOWN ($P_{\text{gen}} \leftarrow P_{\text{gen}} - 0.50\text{ MW}$).
-     - Else: HOLD setpoint.
+   - **Supported Control Laws (`--mode`)**:
+     - **Threshold Mode (`--mode threshold`)**:
+       - If $f < 49.80\text{ Hz}$: Ramp generation UP ($P_{\text{gen}} \leftarrow P_{\text{gen}} + 0.50\text{ MW}$).
+       - If $f > 50.20\text{ Hz}$: Ramp generation DOWN ($P_{\text{gen}} \leftarrow P_{\text{gen}} - 0.50\text{ MW}$).
+       - Else: HOLD setpoint.
+     - **Droop + Secondary PI Mode (`--mode pi`)**:
+       - Proportional droop ($K_p = 15.0\text{ MW/Hz}$) + Integral tracking ($K_i = 2.5\text{ MW/(Hz}\cdot\text{s})$) for zero steady-state error.
+   - **Liveness / Timeout Tracking**: Flags communication loss if $\ge 3$ consecutive polls fail ($0.6\text{ s}$).
    - Writes updated $P_{\text{gen}} \times 100$ back to `sensor` (`HR 1`).
 3. **`attacker` (`192.168.1.77`)**: Unauthenticated third-party host on the control network executing attack scenarios.
 

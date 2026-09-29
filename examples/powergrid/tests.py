@@ -16,9 +16,10 @@ from physics import GridPhysics
 from logger import SimulationLogger
 from plots import plot_simulation_run
 from utils import (
-    NOMINAL_FREQ, INERTIA_H, PHYSICS_PERIOD_SEC,
-    NOMINAL_LOAD, INITIAL_GEN_SETPOINT, SCALE_FACTOR,
-    FREQ_LOW_THRESH, FREQ_HIGH_THRESH, RAMP_STEP
+    NOMINAL_FREQ, INERTIA_H, BASE_POWER_MVA, DAMPING_D,
+    PHYSICS_PERIOD_SEC, NOMINAL_LOAD, INITIAL_GEN_SETPOINT, SCALE_FACTOR,
+    FREQ_LOW_THRESH, FREQ_HIGH_THRESH, RAMP_STEP,
+    CONTROLLER_KP, CONTROLLER_KI, CONTROLLER_DEADBAND_HZ
 )
 
 
@@ -29,6 +30,8 @@ class TestGridPhysics(unittest.TestCase):
         self.physics = GridPhysics(
             f0=NOMINAL_FREQ,
             H=INERTIA_H,
+            S_base=BASE_POWER_MVA,
+            D=DAMPING_D,
             dt=PHYSICS_PERIOD_SEC,
             p_load=NOMINAL_LOAD,
             p_gen=INITIAL_GEN_SETPOINT
@@ -53,9 +56,18 @@ class TestGridPhysics(unittest.TestCase):
         f_next = self.physics.step(INITIAL_GEN_SETPOINT + 5.0)
         self.assertGreater(f_next, f_start)
 
+    def test_damping_self_regulation(self):
+        """Without controller, damping causes frequency to stabilize at a non-zero steady-state offset."""
+        self.physics.set_load(102.0)  # 2 MW disturbance
+        for _ in range(500):
+            f = self.physics.step(INITIAL_GEN_SETPOINT)
+        # With D=1.0, steady state delta_f = (f0 / (2H * D)) * delta_p_pu ... frequency settles finite
+        self.assertGreater(f, 40.0)
+        self.assertLess(f, NOMINAL_FREQ)
+
     def test_threshold_control_recovery(self):
-        """Simulate threshold control loop driving frequency back to around 50 Hz."""
-        self.physics.set_load(104.0)  # 4 MW extra load
+        """Simulate threshold control loop keeping frequency within bounds under large load disturbance."""
+        self.physics.set_load(106.0)  # 6 MW extra load to cross 49.80 Hz threshold
         p_gen = INITIAL_GEN_SETPOINT
 
         for step in range(500):
@@ -67,10 +79,29 @@ class TestGridPhysics(unittest.TestCase):
                 elif f > FREQ_HIGH_THRESH:
                     p_gen -= RAMP_STEP
 
-        # Verify that frequency remains bounded around nominal 50 Hz (+/- 0.8 Hz)
-        self.assertAlmostEqual(self.physics.frequency, NOMINAL_FREQ, delta=0.8)
-        # Verify generation setpoint increased to support the 104 MW load
+        # Verify that frequency remains bounded around nominal 50 Hz (+/- 0.6 Hz)
+        self.assertAlmostEqual(self.physics.frequency, NOMINAL_FREQ, delta=0.6)
         self.assertGreaterEqual(p_gen, 102.0)
+
+    def test_pi_control_recovery(self):
+        """Simulate PI control loop eliminating steady-state frequency error."""
+        self.physics.set_load(103.0)  # 3 MW extra load
+        p_gen = INITIAL_GEN_SETPOINT
+        integral_err = 0.0
+        dt_ctrl = 0.2
+
+        for step in range(600):
+            f = self.physics.step(p_gen)
+            if step % 2 == 0:
+                err = NOMINAL_FREQ - f
+                if abs(err) > CONTROLLER_DEADBAND_HZ:
+                    integral_err += err * dt_ctrl
+                    integral_err = max(-20.0, min(20.0, integral_err))
+                    p_gen = INITIAL_GEN_SETPOINT + CONTROLLER_KP * err + CONTROLLER_KI * integral_err
+
+        # PI control should restore frequency tightly to 50.00 Hz (+/- 0.05 Hz)
+        self.assertAlmostEqual(self.physics.frequency, NOMINAL_FREQ, delta=0.05)
+        self.assertAlmostEqual(p_gen, 103.0, delta=0.2)
 
 
 class TestModbusScaling(unittest.TestCase):
