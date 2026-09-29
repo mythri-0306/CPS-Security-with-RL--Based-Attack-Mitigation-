@@ -46,6 +46,12 @@ def build_debug_logger(
     # log_path = _getlog_path()
     # assert log_path != None, "No log path found"
 
+    if ldir and not os.path.exists(ldir):
+        try:
+            os.makedirs(ldir, exist_ok=True)
+        except Exception:
+            pass
+
     fh = logging.handlers.RotatingFileHandler(
         ldir + name + suffix,
         maxBytes=bytes_per_file,

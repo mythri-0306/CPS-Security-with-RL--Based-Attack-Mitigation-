@@ -1,5 +1,4 @@
-#!/usr/bin/python2
-
+#!/usr/bin/env python
 
 """
 synch-client.py
@@ -8,20 +7,25 @@ value is passed either as a ``str`` or as a ``bool``. In case of ``str`` the val
 converted to an ``int`` to be written in a holding register
 """
 
-# NOTE: https://pymodbus.readthedocs.io/en/latest/examples/synchronous-client.html
-
-import argparse  # TODO: check if it is too slow at runtime
-from pymodbus.client.sync import ModbusTcpClient as ModbusClient
-#from pymodbus.client.sync import ModbusUdpClient as ModbusClient
-#from pymodbus.client.sync import ModbusSerialClient as ModbusClient
+import argparse
+try:
+    from pymodbus.client import ModbusTcpClient as ModbusClient
+except ImportError:
+    from pymodbus.client.sync import ModbusTcpClient as ModbusClient
 
 from sys import argv
+
+def _check_resp_ok(resp):
+    if hasattr(resp, 'isError'):
+        return not resp.isError()
+    if hasattr(resp, 'function_code'):
+        return resp.function_code < 0x80
+    return True
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', type=str, dest='ip', help='request ip')
-    # NOTE: allows non standard port to test without sudo
     parser.add_argument('-p', type=int, dest='port',
             default=502, help='port number')
     parser.add_argument('-u', type=int, dest='unit',
@@ -34,11 +38,11 @@ if __name__ == "__main__":
             help='mode: read or write')
     parser.add_argument('-o', dest='offset', type=int,
             help='0-based modbus addressing offset',
-            choices=range(0,2000),  # NOTE: empirical value
+            choices=range(0, 2000),
             default=0)
     parser.add_argument('--count', dest='count',
             help='count for multiple read and write',
-            type=int, choices=range(1,2000),  # NOTE: bounds from the standard
+            type=int, choices=range(1, 2000),
             default=1)
     parser.add_argument('-r', dest='register',
             help='list of int values', type=int,
@@ -46,85 +50,52 @@ if __name__ == "__main__":
             default=0)
     parser.add_argument('-c', dest='coil',
             help='list of 0 (False) or 1 (True) int values', type=int, nargs='+',
-            default=0, choices=[0, 1])  #  argparse does not manage bool well
+            default=0, choices=[0, 1])
 
     args = parser.parse_args()
 
-    # import logging
-    # logging.basicConfig()
-    # log = logging.getLogger()
-    # log.setLevel(logging.DEBUG)
-
-    # TODO: check retries, and other options
     client = ModbusClient(args.ip, port=args.port)
-            # retries=3, retry_on_empty=True)
-
     client.connect()
 
-    # TODO: check if asserts are slowing down read/write
     if args.mode == 'w':
-
-        # NOTE: write_register
         if args.type == 'HR':
             if args.count == 1:
                 hr_write = client.write_register(args.offset, args.register[0])
-                assert(hr_write.function_code < 0x80)
+                assert(_check_resp_ok(hr_write))
             else:
                 hrs_write = client.write_registers(args.offset, args.register)
-                assert(hrs_write.function_code < 0x80)
+                assert(_check_resp_ok(hrs_write))
 
-        # NOTE: write_coil: map integers to bools
         elif args.type == 'CO':
-
             if args.count == 1:
-                # NOTE: coil is a list with one bool
-                if args.coil[0] == 1:
-                    co_write = client.write_coil(args.offset, True)
-                else:
-                    co_write = client.write_coil(args.offset, False)
-                assert(co_write.function_code < 0x80)
-
+                co_val = True if args.coil[0] == 1 else False
+                co_write = client.write_coil(args.offset, co_val)
+                assert(_check_resp_ok(co_write))
             else:
-                coils = []
-                for c in args.coil:
-                    if c == 1:
-                        coils.append(True)
-                    else:
-                        coils.append(False)
+                coils = [True if c == 1 else False for c in args.coil]
                 cos_write = client.write_coils(args.offset, coils)
-                assert(cos_write.function_code < 0x80)
-
+                assert(_check_resp_ok(cos_write))
 
     elif args.mode == 'r':
-
-        # NOTE: read_holding_registers
         if args.type == 'HR':
-            hr_read = client.read_holding_registers(args.offset,
-                count=args.count)
-            assert(hr_read.function_code < 0x80)
+            hr_read = client.read_holding_registers(args.offset, count=args.count)
+            assert(_check_resp_ok(hr_read))
             print(hr_read.registers[0:args.count])
 
-        # NOTE: read_holding_registers
         elif args.type == 'IR':
-            ir_read = client.read_input_registers(args.offset,
-                count=args.count)
-            assert(ir_read.function_code < 0x80)
+            ir_read = client.read_input_registers(args.offset, count=args.count)
+            assert(_check_resp_ok(ir_read))
             print(ir_read.registers[0:args.count])
 
-        # NOTE: read_discrete_inputs
         elif args.type == 'DI':
-            di_read = client.read_discrete_inputs(args.offset,
-                count=args.count)
-            assert(di_read.function_code < 0x80)
+            di_read = client.read_discrete_inputs(args.offset, count=args.count)
+            assert(_check_resp_ok(di_read))
             print(di_read.bits)
 
-        # NOTE: read_discrete_inputs
         elif args.type == 'CO':
-            co_read = client.read_coils(args.offset,
-                count=args.count)
-            assert(co_read.function_code < 0x80)
+            co_read = client.read_coils(args.offset, count=args.count)
+            assert(_check_resp_ok(co_read))
             print(co_read.bits)
 
-
-
     client.close()
+

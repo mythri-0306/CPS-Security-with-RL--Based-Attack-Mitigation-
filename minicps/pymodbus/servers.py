@@ -1,31 +1,44 @@
-#!/usr/bin/env python2
-
-# NOTE: https://pymodbus.readthedocs.io/en/latest/examples/asynchronous-server.html
-
-from pymodbus.server.async import StartTcpServer
-from pymodbus.server.async import StartUdpServer
-from pymodbus.server.async import StartSerialServer
-
-from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.datastore import ModbusSequentialDataBlock
-from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
-from pymodbus.transaction import ModbusRtuFramer, ModbusAsciiFramer
-from pymodbus.server.async import StartTcpServer
+#!/usr/bin/env python
 
 import argparse
+import sys
+
+try:
+    from pymodbus.server import StartTcpServer
+except ImportError:
+    try:
+        import importlib
+        StartTcpServer = importlib.import_module('pymodbus.server.async').StartTcpServer
+    except Exception:
+        from pymodbus.server.asynchronous import StartTcpServer
+
+try:
+    from pymodbus.datastore import ModbusSequentialDataBlock
+    from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
+    _USE_PYMODBUS_V2_OR_OLDER = True
+except (ImportError, TypeError):
+    _USE_PYMODBUS_V2_OR_OLDER = False
+
+if not _USE_PYMODBUS_V2_OR_OLDER:
+    try:
+        from pymodbus.datastore import ModbusSequentialDataBlock
+        from pymodbus.datastore import ModbusDeviceContext, ModbusServerContext
+    except ImportError:
+        pass
+
+try:
+    from pymodbus.device import ModbusDeviceIdentification
+except ImportError:
+    ModbusDeviceIdentification = None
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-
-    # NOTE: network
     parser.add_argument('-i', type=str, dest='ip', help='server ip')
-    # NOTE: allows non standard port to test without sudo
     parser.add_argument('-p', type=int, dest='port',
             default=502, help='port number')
     parser.add_argument('-m', type=int, dest='mode', choices=[1],
             default=1, help='mode')
-    # NOTE: tags
     parser.add_argument('-d', type=int, dest='discrete_inputs',
             choices=range(1, 1000),
             default=10,
@@ -45,45 +58,43 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # configure the service logging
-    # import logging
-    # logging.basicConfig()
-    # log = logging.getLogger()
-    # log.setLevel(logging.DEBUG)
+    # Create datastore based on pymodbus version
+    try:
+        store = ModbusSlaveContext(
+            di=ModbusSequentialDataBlock(0, [0] * args.discrete_inputs),
+            co=ModbusSequentialDataBlock(0, [0] * args.coils),
+            ir=ModbusSequentialDataBlock(0, [0] * args.input_registers),
+            hr=ModbusSequentialDataBlock(0, [0] * args.holding_registers),
+            zero_mode=False,
+        )
+        context = ModbusServerContext(slaves=store, single=True)
+    except Exception:
+        # pymodbus 3.x
+        from pymodbus.datastore import ModbusDeviceContext, ModbusServerContext, ModbusSequentialDataBlock
+        store = ModbusDeviceContext(
+            di=ModbusSequentialDataBlock(1, [0] * max(args.discrete_inputs, 100)),
+            co=ModbusSequentialDataBlock(1, [0] * max(args.coils, 100)),
+            ir=ModbusSequentialDataBlock(1, [0] * max(args.input_registers, 100)),
+            hr=ModbusSequentialDataBlock(1, [0] * max(args.holding_registers, 100)),
+        )
+        context = ModbusServerContext(devices=store)
 
-    # NOTE: initialize everthing to 0
-    store = ModbusSlaveContext(
-        di=ModbusSequentialDataBlock(0, [0] * args.discrete_inputs),
-        co=ModbusSequentialDataBlock(0, [0] * args.coils),
-        ir=ModbusSequentialDataBlock(0, [0] * args.input_registers),
-        hr=ModbusSequentialDataBlock(0, [0] * args.holding_registers),
-        zero_mode=False,
-    )
+    identity = None
+    if ModbusDeviceIdentification is not None:
+        identity = ModbusDeviceIdentification()
+        identity.VendorName = 'Pymodbus'
+        identity.ProductCode = 'PM'
+        identity.VendorUrl = 'http://github.com/bashwork/pymodbus/'
+        identity.ProductName = 'Pymodbus Server'
+        identity.ModelName = 'Pymodbus Server'
+        identity.MajorMinorRevision = '1.0'
 
-    # NOTE: use 0-based addressing mapped internally to 1-based
-    context = ModbusServerContext(slaves=store, single=True)
-
-    # TODO: server id information
-    identity = ModbusDeviceIdentification()
-    identity.VendorName  = 'Pymodbus'
-    identity.ProductCode = 'PM'
-    identity.VendorUrl   = 'http://github.com/bashwork/pymodbus/'
-    identity.ProductName = 'Pymodbus Server'
-    identity.ModelName   = 'Pymodbus Server'
-    identity.MajorMinorRevision = '1.0'
-
-
-    # NOTE: currently only implements mode 1
     if args.mode == 1:
-        # NOTE: ip is a str, port is an int
-        StartTcpServer(context, identity=identity,
-            address=(args.ip, args.port))
+        if identity is not None:
+            StartTcpServer(context=context, identity=identity,
+                           address=(args.ip, args.port))
+        else:
+            StartTcpServer(context=context,
+                           address=(args.ip, args.port))
 
-    else:
-        pass
-    # StartUdpServer(context, identity=identity, address=("localhost", 502))
-    # StartSerialServer(context, identity=identity, port='/dev/pts/3',
-    #     framer=ModbusRtuFramer)
-    # StartSerialServer(context, identity=identity, port='/dev/pts/3',
-    #     framer=ModbusAsciiFramer)
 

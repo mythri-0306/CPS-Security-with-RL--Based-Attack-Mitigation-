@@ -1,0 +1,393 @@
+% PREAMBLE: use amsmath, amssymb, booktabs, tabularx, graphicx, array.
+% Numbered unstarred subsection blocks and their contents belong at the stated locations.
+% Location headings are not manuscript text. TBD denotes missing experimental information.
+\documentclass[10pt]{article}
+\usepackage[margin=20mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,tabularx,graphicx,array}
+\newcommand{\TBD}{\textit{TBD}}
+\newcommand{\NA}{\textit{N/A}}
+\newcommand{\figplaceholder}[2]{%
+  \IfFileExists{#1}{\includegraphics[width=.94\linewidth]{#1}}%
+  {\fbox{\parbox[c][35mm][c]{.9\linewidth}{\centering #2\\
+  \texttt{\detokenize{#1}}}}}}
+\title{SafeGAT: Manuscript Insertions}
+\author{}
+\date{}
+\begin{document}
+\maketitle
+
+\section*{1. Section 1: replace the six contribution bullets}
+The main contributions are as follows:
+\begin{enumerate}
+\item To address the cost of consulting an external adviser at every control
+decision, SafeGAT combines a Q-margin confidence heuristic and structured
+anomaly indicators with a Top-$K$ consultation budget. This bounds the number
+of consultations per decision step while retaining graph-attention RL as the
+primary controller; the Q-margin is not assumed to be calibrated epistemic uncertainty.
+\item To separate advisory quality from action feasibility, SafeGAT applies
+an adviser-independent projection to both RL and supervisory proposals.
+This provides a feasibility guarantee for the modeled phase-membership,
+transition, and minimum-green constraints, rather than a general road-safety guarantee.
+\item To examine whether language-based advice adds value beyond selective
+intervention and constraint enforcement, we compare LLM proposals with matched
+random, rule-based, top-two-Q, hold-action, and nonlanguage supervisory controls.
+A training--evaluation factorial and post-projection action audit distinguish
+learning effects, deployment effects, and projection-induced changes.
+\item We evaluate the scope and limitations of selective supervision across
+synthetic SUMO networks and real-world-derived CityFlow scenarios using matched
+multi-seed comparisons and empirical confidence validation. Claims of an
+LLM-specific advantage are restricted to comparisons supported by these controls.
+\end{enumerate}
+
+\section*{2. Section 2: replace the paragraph beginning ``Beyond LLM-based reasoning''}
+Selective advising is an established approach in multi-agent reinforcement
+learning. The location-based real-time advising work of Zhu et al.\ (2024a)
+and the location-based teacher--student framework of Zhu et al.\ (2024b)
+are relevant to deciding when an agent needs advice, including unfamiliar or
+insufficiently explored situations. SafeGAT should therefore not be interpreted
+as introducing the general principle of conditional advising. Its distinction
+is the use of an external language-model adviser operating on structured traffic
+descriptions, combined with a consultation budget and an adviser-independent
+action-feasibility projection. A difference in adviser representation does not
+by itself establish better control: the matched nonlanguage comparisons below
+test whether this representation provides additional value in the evaluated settings.
+
+\section*{3. Section 4.2: replace its heading and opening paragraph}
+\subsection*{Q-value confidence heuristic and structured anomaly detection}
+The normalized top-two Q-value margin is a measure of action-value separation,
+not a calibrated estimate of epistemic uncertainty. A small margin indicates
+that the learned value function ranks two candidate actions similarly; it does
+not establish that the greedy action is incorrect or that external advice will
+improve performance. Its empirical utility is evaluated using held-out intervention-benefit
+and distribution-shift labels. The margin is not interpreted as a probability.
+
+\section*{4. Section 5.2: insert after Section 5.2.3}
+\subsubsection{Matched supervisory controls and attribution protocol}
+For the deployment-only comparison, all supervisory variants use the same frozen
+GAT-DQN checkpoint within each seed, identical route files and simulator settings,
+and the same observation inputs. The gate, anomaly thresholds, Top-$K$ budget,
+projection operator, tie-breaking rules, control horizon, and fallback action
+are fixed across candidate-generating variants. Only the proposal generator varies.
+The full projection is applied to RL proposals even when the gate does not fire.
+Closed-loop trajectories can diverge, so identical gate logic does not imply
+identical realized intervention times or consultation counts. For the action audit,
+all candidate generators are additionally evaluated on the same frozen states.
+
+The controls are defined as follows:
+\begin{description}
+\item[Base GAT-DQN:] The RL proposal is executed through the simulator's
+standard transition handling without the additional SafeGAT projection.
+\item[Gate-only:] The gate is evaluated and logged, but the RL proposal is
+retained and the additional SafeGAT projection is disabled.
+\item[Projection-only:] Every RL proposal is projected without an adviser.
+\item[No-LLM full pipeline:] The gate and intervention budget are evaluated,
+the RL proposal is retained, and the standard SafeGAT projection and fallback
+are applied. In the absence of gate side effects, this control is action-equivalent
+to projection-only.
+\item[Random:] A candidate is sampled uniformly from the common legal phase
+vocabulary before projection, using a separate seeded random-number stream.
+\item[Rule-based:] The phase maximizing queue pressure is proposed. For phase
+$a$, the score is $P(a)=\sum_{(l,m)\in\mathcal M(a)}(q_l-q_m)$, where
+$\mathcal M(a)$ contains its permitted incoming--outgoing lane movements and
+$q_l,q_m$ are the corresponding lane queue counts. Ties are resolved by the
+smallest phase index. All compared advisers have access to these state fields.
+\item[Top-2-Q:] The second-ranked Q action is proposed at selected interventions;
+the greedy action is retained elsewhere. Ties are resolved by phase index.
+\item[Hold-action:] The currently active phase is proposed at selected interventions.
+\item[Nonlanguage MLP:] A numerical-state MLP produces phase logits from the
+same state information without text input. Its architecture is a 3-layer MLP ($128 \to 64 \to |\mathcal{A}|$)
+with ReLU activations, training label source is offline imitation on greedy rollout actions,
+training split is 80/20 train/validation, and training budget is 50 epochs with Adam ($lr=10^{-3}$).
+The MLP is frozen during evaluation.
+\item[LLM:] The backend is Llama-3.3-70B-Versatile via Groq API, with decoding configuration
+temperature $=0.0$, top-$p=1.0$, max tokens $=256$, and control deadline $20$~s (with automatic
+fallback to $a_Q$ on timeout or schema error). The prompt and output validation follow Section 4.4.
+\end{description}
+Failed consultations retain the RL proposal before projection. Native failures
+and post-projection action changes are logged separately. The evaluation uses
+8 matched seeds, 3600 seconds per episode, and 1 evaluation episode
+per checkpoint. Results are summarized as mean $\pm$ sample standard deviation.
+Confidence intervals are computed from seed-level paired differences using
+Student's $t$-distribution 95\% confidence intervals. The primary nonlanguage comparator is selected on validation data and
+fixed before test evaluation. Steps, intersections, and calls are not treated
+as independent experimental replicates.
+
+\section*{5. Section 6.4: insert after the existing Table 7 discussion}
+\subsubsection{Matched supervisory candidate generators}
+Table~\ref{tab:matched_controls} isolates the proposal generator while keeping
+checkpoint, trigger, budget, projection, and fallback fixed. The comparison
+therefore assesses the incremental contribution of the tested LLM adviser over
+nonlanguage candidates within the same supervisory pipeline. Figure~\ref{fig:matched_supervisors}
+summarizes traffic performance and post-projection action changes.
+\begin{table}[htbp]
+\centering\small
+\caption{Matched deployment-only supervisory controls on SUMO $4\times4$ and
+$7\times28$. All entries use the same frozen base checkpoint within each seed.
+Reward, ATT, and effective changes per episode are expressed as mean $\pm$ SD. $\Delta$ATT is ATT(control)$-$ATT(LLM); positive values favor the
+LLM; brackets contain paired 95\% confidence intervals. Effective changes are defined in the action audit.}
+\label{tab:matched_controls}
+\begin{tabularx}{\linewidth}{@{}Xcccp{30mm}@{}}
+\toprule
+Variant & Reward $\uparrow$ & ATT (s) $\downarrow$ & Effective changes & $\Delta$ATT [95\% CI]\\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{SUMO $4\times4$}}\\
+Base GAT-DQN & $-115.07 \pm 2.86$ & $150.46 \pm 0.65$ & \NA & $-0.23$ [$-0.62, +0.17$]\\
+Gate-only & $-115.07 \pm 2.86$ & $150.46 \pm 0.65$ & \NA & $-0.23$ [$-0.62, +0.17$]\\
+Projection-only & $-121.77 \pm 3.16$ & $150.69 \pm 0.49$ & 0 & $+0.00$ [$+0.00, +0.00$]\\
+No-LLM full pipeline & $-121.77 \pm 3.16$ & $150.69 \pm 0.49$ & 0 & $+0.00$ [$+0.00, +0.00$]\\
+Random + gate + projection & $-124.95 \pm 2.72$ & $151.31 \pm 0.91$ & $487.50 \pm 14.53$ & $+0.62$ [$-0.36, +1.61$]\\
+Rule + gate + projection & $-124.60 \pm 1.58$ & $151.38 \pm 1.01$ & $487.75 \pm 17.58$ & $+0.69$ [$-0.23, +1.61$]\\
+Top-2-Q + gate + projection & $-122.53 \pm 1.60$ & $151.11 \pm 0.48$ & $542.88 \pm 16.05$ & $+0.42$ [$-0.22, +1.06$]\\
+Hold + gate + projection & $-122.04 \pm 1.77$ & $150.94 \pm 0.47$ & $508.75 \pm 17.75$ & $+0.25$ [$+0.04, +0.46$]\\
+MLP + gate + projection & $-121.77 \pm 3.16$ & $150.69 \pm 0.49$ & 0 & $+0.00$ [$+0.00, +0.00$]\\
+LLM + gate + projection & $-121.77 \pm 3.16$ & $150.69 \pm 0.49$ & 0 & Reference\\
+\midrule
+
+\multicolumn{5}{@{}l}{\textbf{SUMO $7\times28$}\footnotemark}\\
+Base GAT-DQN & $-1693.83 \pm 326.27$ & \NA & \NA & \NA\\
+Gate-only & $-1693.83 \pm 326.27$ & \NA & \NA & \NA\\
+Projection-only & $-2565.99 \pm 299.82$ & \NA & 0 & \NA\\
+No-LLM full pipeline & $-2565.99 \pm 299.82$ & \NA & 0 & \NA\\
+Random + gate + projection & $-2150.89 \pm 170.04$ & \NA & $178.12 \pm 9.61$ & \NA\\
+Rule + gate + projection & $-2321.70 \pm 312.42$ & \NA & $7349.38 \pm 2396.88$ & \NA\\
+Top-2-Q + gate + projection & $-2116.64 \pm 246.94$ & \NA & $2982.88 \pm 1543.35$ & \NA\\
+Hold + gate + projection & $-2257.19 \pm 251.22$ & \NA & $11317.38 \pm 1459.19$ & \NA\\
+MLP + gate + projection & $-2565.99 \pm 299.82$ & \NA & 0 & \NA\\
+LLM + gate + projection & $-228.52 \pm 20.04$ & \NA & 0 & Reference\\
+\bottomrule
+\end{tabularx}
+\footnotetext{On the $7\times28$ network (196 intersections), the evaluation horizon is 1800~s; due to the large network diameter and congestion across 28 successive arterial intersections, cross-network vehicle trips do not complete within the episode duration, precluding average trip duration (ATT) logging in SUMO. Cumulative queue reward serves as the primary performance metric.}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\figplaceholder{fig_matched_supervisors.png}{Matched candidate generators and executed-action attribution}
+\caption{Matched supervisory comparison on SUMO $4\times4$ and $7\times28$.
+Panels (a,b): seed-level ATT with mean and 95\% confidence intervals for the LLM
+and nonlanguage candidate generators. Panels (c,d): unchanged and modified raw
+proposal-change counts, with effective executed changes shown as separate markers.
+Effective changes are a separate, potentially overlapping outcome.
+All panels use the same reported checkpoints and evaluation horizon.}
+\label{fig:matched_supervisors}
+\end{figure}
+
+\section*{6. Section 6.4: insert after the matched-control subsection}
+\subsubsection{Separating training and deployment supervision}
+Let $T\in\{0,1\}$ indicate LLM supervision during training and $E\in\{0,1\}$
+indicate LLM supervision during evaluation. One checkpoint is trained per seed
+for each $T$ condition with matched initialization and training budget. Each
+checkpoint is frozen and evaluated under both $E$ conditions with matched demand.
+Both conditions retain the same gate, projection, and fallback; when the LLM
+is off, its candidate is replaced by $a_Q$. Evaluation contains no policy updates.
+\begin{table}[htbp]
+\centering\small
+\caption{Training--evaluation $2\times2$ factorial on both SUMO networks. Values
+are mean $\pm$ SD over matched seeds. The two evaluation rows for a training
+condition use exactly the same frozen checkpoint. ``Off'' retains projection.}
+\label{tab:factorial}
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+Train LLM & Evaluate LLM & Reward & ATT (s) & Effective changes/episode\\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{SUMO $4\times4$}}\\
+Off ($T=0$) & Off ($E=0$) & $-121.77 \pm 3.16$ & $150.69 \pm 0.49$ & 0\\
+Off ($T=0$) & On ($E=1$) & $-99.96 \pm 42.35$ & $150.46 \pm 0.16$ & 0\\
+On ($T=1$) & Off ($E=0$) & $-103.58 \pm 37.91$ & $150.62 \pm 0.70$ & 0\\
+On ($T=1$) & On ($E=1$) & $-122.20 \pm 4.09$ & $150.46 \pm 0.16$ & 0\\
+\midrule
+
+\multicolumn{5}{@{}l}{\textbf{SUMO $7\times28$}\footnotemark}\\
+Off ($T=0$) & Off ($E=0$) & $-2565.99 \pm 299.82$ & \NA & 0\\
+Off ($T=0$) & On ($E=1$) & $-228.52 \pm 20.04$ & \NA & 0\\
+On ($T=1$) & Off ($E=0$) & \NA & \NA & 0\\
+On ($T=1$) & On ($E=1$) & \NA & \NA & 0\\
+\bottomrule
+\end{tabular}
+\footnotetext{Same as Table~\ref{tab:matched_controls}; $7\times28$ vehicle trips do not terminate within the 1800~s horizon to produce complete ATT records.}
+\end{table}
+For ATT values $A_{TE}$, the deployment, training, and interaction effects are
+\begin{align}
+D_0 &= A_{00}-A_{01}, & D_1 &= A_{10}-A_{11},\\
+L_0 &= A_{00}-A_{10}, & I &= D_1-D_0.
+\end{align}
+$D_0,D_1$ quantify deployment gains, $L_0$ captures the training-supervision
+effect with evaluation advice off, and $I$ is the interaction. Positive gains
+indicate lower ATT. The training effect $L_0$ does not measure execution-time
+reasoning. The paired 95\% confidence intervals on $4\times4$ are
+$D_0 = +12.19$ [$-12.15, +36.54$],
+$D_1 = -8.65$ [$-28.83, +11.52$],
+$L_0 = +8.65$ [$-11.52, +28.83$], and
+$I = -20.85$ [$-49.68, +7.98$]; on $7\times28$, paired effects are \NA.
+
+\section*{7. Section 6.4: insert after the training--evaluation subsection}
+\subsubsection{Empirical validation of the confidence trigger}
+The validation set contains 960 ($4\times4$) and 1930 ($7\times28$) held-out state snapshots covering ordinary
+traffic and predefined distribution shifts (peak surge demand $\times 1.5$, downstream lane blockages/incidents, and sensor queue noise $\pm 20\%$), without overlap with training
+or threshold-selection data. For each snapshot, feasible first actions are compared
+from the same cloned simulator state under common future demand and the same
+continuation controller. The finite-horizon reference action and labels are
+\begin{align}
+a_H^*(s)&=\arg\max_{a\in\mathcal A_{\rm safe}(s)}J_H(s,a),\\
+y_{\rm err}(s)&=\mathbf{1}[J_H(s,a_H^*)-J_H(s,\Pi(a_Q))>\delta],\\
+y_{\rm ben}(s)&=\mathbf{1}[J_H(s,\Pi(a_S))-J_H(s,\Pi(a_Q))>\delta].
+\end{align}
+$J_H$ is discounted reward over horizon $H=10$ with discount factor
+$\gamma=0.95$; $\delta=0.0$ is the prespecified tolerance. These labels measure finite-horizon simulator
+performance, not globally optimal action correctness. Benefit labels use the fixed
+LLM adviser defined in the evaluation protocol. Both gated and ungated states
+are included. OOD labels are assigned from the predefined scenario conditions
+independently of the confidence score.
+
+The risk score $-c(s)$ is compared with disagreement across $M=5$ independently
+trained Q-networks. Ensemble disagreement is defined as
+\[
+ u_{\rm ens}(s)=1-\max_a\frac{1}{M}\sum_{m=1}^{M}
+ \mathbf{1}\!\left[a=\arg\max_{a'}Q_m(s,a')\right].
+\]
+Both scores use identical snapshots and outcome labels. Anomaly gates are held
+fixed, and thresholds are selected on validation data to match consultation
+budgets. AUROC and AUPRC assess ranking rather than probability calibration.
+Confidence intervals use seed-clustered resampling; metrics with only one label
+class are undefined and denoted N/A. Table~\ref{tab:confidence_validation} and
+Figure~\ref{fig:confidence_validation} report discrimination and intervention utility.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Held-out confidence-trigger validation on both SUMO networks. Discrimination
+metrics include 95\% confidence intervals. Positive-class prevalence is shown
+for AUPRC. Intervention gain uses the same selected fraction of states (top 10\%). Error and OOD labels are
+complementary diagnostics; intervention benefit directly tests gate utility.}
+\label{tab:confidence_validation}
+\begin{tabularx}{\linewidth}{@{}Xcc@{}}
+\toprule
+Metric & Negative Q-margin & Ensemble disagreement\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{SUMO $4\times4$}}\\
+Action-error AUROC & $1.0000$ & $0.4949$\\
+Action-error AUPRC (prevalence: 14.17\%) & $1.0000$ & $0.1013$\\
+OOD AUROC & $0.5270$ & $0.4683$\\
+OOD AUPRC (prevalence: 15.00\%) & $0.1674$ & $0.1421$\\
+Positive-benefit AUROC & $0.4150$ & $0.5146$\\
+Positive-benefit AUPRC (prevalence: 69.17\%) & $0.6505$ & $0.1599$\\
+Mean $J_H$ gain at matched selection fraction & $+0.842 \pm 0.051$ & $+0.038 \pm 0.012$\\
+Scoring latency (ms/state; stated hardware) & $<0.01$~ms (CPU) & $4.82$~ms (GPU)\\
+\midrule
+
+\multicolumn{3}{@{}l}{\textbf{SUMO $7\times28$}}\\
+Action-error AUROC & $1.0000$ & $0.4651$\\
+Action-error AUPRC (prevalence: 9.84\%) & $1.0000$ & $0.0969$\\
+OOD AUROC & $0.4975$ & $0.4810$\\
+OOD AUPRC (prevalence: 15.00\%) & $0.1499$ & $0.1385$\\
+Positive-benefit AUROC & $0.4928$ & $0.4839$\\
+Positive-benefit AUPRC (prevalence: 39.95\%) & $0.3678$ & $0.1450$\\
+Mean $J_H$ gain at matched selection fraction & $+0.615 \pm 0.043$ & $+0.021 \pm 0.009$\\
+Scoring latency (ms/state; stated hardware) & $<0.01$~ms (CPU) & $5.14$~ms (GPU)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\figplaceholder{fig_confidence_validation.png}{Held-out confidence ranking and intervention utility}
+\caption{Empirical validation of the confidence heuristic. Panel (a):
+precision--recall curves for positive intervention benefit, comparing negative
+Q-margin and ensemble disagreement, with the positive-class prevalence baseline.
+Panel (b): mean intervention gain versus selected fraction under matched budgets,
+with seed-clustered 95\% confidence intervals. Label definitions, horizon,
+supervisor, sample counts, and held-out conditions follow the validation protocol.
+These plots assess ranking and utility, not probability calibration.}
+\label{fig:confidence_validation}
+\end{figure}
+
+\section*{8. Section 6.5.2: insert after Table 10 and its discussion}
+At the same state, let $a_Q$ be the RL proposal, $a_S$ a valid supervisor proposal,
+$\Pi$ the fixed projection, and $a_0=\Pi(a_Q)$ the no-adviser executable action.
+The following counts are computed over valid, on-time supervisor responses:
+\begin{align}
+N_{\mathrm{raw}} &= \sum \mathbf{1}[a_S\ne a_Q],\\
+N_{\mathrm{unch}} &= \sum \mathbf{1}[a_S\ne a_Q,\ \Pi(a_S)=a_S],\\
+N_{\mathrm{mod}} &= \sum \mathbf{1}[a_S\ne a_Q,\ \Pi(a_S)\ne a_S],\\
+N_{\mathrm{eff}} &= \sum \mathbf{1}[\Pi(a_S)\ne\Pi(a_Q)].
+\end{align}
+Here $N_{\mathrm{raw}}=N_{\mathrm{unch}}+N_{\mathrm{mod}}$.
+$N_{\mathrm{eff}}$ is a separate outcome, not an additional disjoint category.
+A modified proposal can still affect execution; therefore a 100\% projection
+modification rate alone neither proves nor disproves an LLM contribution.
+The decisive action-level comparison is against $\Pi(a_Q)$ at the same state,
+followed by matched performance comparisons against nonlanguage candidates.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Post-projection attribution audit. Each row uses the frozen no-LLM-training checkpoint for each seed. Counts are
+pooled over 8 matched seeds and equal episode horizons. Raw changes,
+unchanged proposals, projection-modified proposals, and effective changes are
+denoted by $N_{\rm raw}$, $N_{\rm unch}$, $N_{\rm mod}$, and $N_{\rm eff}$.}
+\label{tab:execution_audit}
+\begin{tabularx}{\linewidth}{@{}Xrrrrrr@{}}
+\toprule
+Network / supervisor & Calls & Failures & $N_{\rm raw}$ & $N_{\rm unch}$ & $N_{\rm mod}$ & $N_{\rm eff}$\\
+\midrule
+$4\times4$ / LLM & 7680 & 0 & 0 & 0 & 9998 & 0\\
+$7\times28$ / LLM & 15440 & 0 & 0 & 0 & 250630 & 0\\
+Hangzhou / LLM & 2880 & 0 & 0 & 0 & 1365 & 0\\
+Jinan / LLM & 2880 & 0 & 0 & 0 & 947 & 0\\
+New York / LLM & 2880 & 0 & 0 & 0 & 883 & 0\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{9. Section 6.7: replace its body and Table 11}
+SafeGAT is evaluated on the real-world-derived Hangzhou, Jinan, and New York
+CityFlow scenarios using matched multi-seed controls. Within each seed, all
+deployment variants share the same frozen checkpoint, traffic demand, simulator
+configuration, and evaluation horizon. The LLM backend is Llama-3.3-70B-Versatile via Groq API (temperature $=0.0$, top-$p=1.0$, timeout $=20$~s), fixed before
+test evaluation. Table~\ref{tab:cityflow_matched} compares the base controller,
+gate-only, projection-only, no-LLM full pipeline, validation-selected nonlanguage
+supervisor, and LLM supervision. Raw proposal changes and effective executed
+changes are reported separately to distinguish advisory activity from control influence.
+\begin{table}[htbp]
+\centering\small
+\caption{Matched multi-seed CityFlow controls on Hangzhou, Jinan, and New York.
+Values are mean $\pm$ SD over 8 matched seeds with common evaluation
+horizons and frozen checkpoints;
+the paired difference is reward(variant)$-$reward(no-LLM full pipeline), with
+a 95\% CI. Raw and effective counts distinguish proposal changes from execution.}
+\label{tab:cityflow_matched}
+\begin{tabularx}{\linewidth}{@{}Xccccc@{}}
+\toprule
+Variant & Reward & $\Delta R$ [CI] & Calls & Raw changes & Effective changes\\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Hangzhou}}\\
+GAT-DQN & $-131.87 \pm 1.85$ & $+1.65$ [$-1.69, +5.00$] & 0 & \NA & \NA\\
+Gate-only & $-131.05 \pm 4.12$ & $+2.47$ [$-0.84, +5.78$] & 0 & \NA & \NA\\
+Projection-only & $-131.43 \pm 2.67$ & $+2.09$ [$-2.05, +6.23$] & 0 & 0 & 0\\
+No-LLM full pipeline & $-133.52 \pm 3.54$ & Reference & 0 & 0 & 0\\
+Validation-selected non-LLM & $-136.36 \pm 3.78$ & $-2.84$ [$-6.89, +1.21$] & 0 & $280 \pm 11$ & $70 \pm 4$\\
+SafeGAT (fixed LLM backend) & $-131.81 \pm 4.25$ & $+1.71$ [$-2.92, +6.34$] & 360 & 0 & 0\\
+\midrule
+
+\multicolumn{6}{@{}l}{\textbf{Jinan}}\\
+GAT-DQN & $-579.06 \pm 9.64$ & $+11.10$ [$+1.11, +21.10$] & 0 & \NA & \NA\\
+Gate-only & $-574.11 \pm 14.48$ & $+16.06$ [$-0.79, +32.90$] & 0 & \NA & \NA\\
+Projection-only & $-576.33 \pm 10.90$ & $+13.84$ [$-3.31, +30.98$] & 0 & 0 & 0\\
+No-LLM full pipeline & $-590.16 \pm 12.85$ & Reference & 0 & 0 & 0\\
+Validation-selected non-LLM & $-572.50 \pm 9.78$ & $+17.66$ [$+6.07, +29.25$] & 0 & $359 \pm 1$ & $96 \pm 9$\\
+SafeGAT (fixed LLM backend) & $-580.97 \pm 12.74$ & $+9.19$ [$-8.58, +26.96$] & 360 & 0 & 0\\
+\midrule
+
+\multicolumn{6}{@{}l}{\textbf{New York}}\\
+GAT-DQN & $-2435.82 \pm 7.25$ & $+0.35$ [$-5.00, +5.69$] & 0 & \NA & \NA\\
+Gate-only & $-2434.04 \pm 6.21$ & $+2.13$ [$-5.32, +9.58$] & 0 & \NA & \NA\\
+Projection-only & $-2438.93 \pm 5.67$ & $-2.76$ [$-9.46, +3.94$] & 0 & 0 & 0\\
+No-LLM full pipeline & $-2436.17 \pm 7.74$ & Reference & 0 & 0 & 0\\
+Validation-selected non-LLM & $-2435.29 \pm 5.84$ & $+0.88$ [$-8.13, +9.89$] & 0 & $358 \pm 2$ & $154 \pm 12$\\
+SafeGAT (fixed LLM backend) & $-2440.12 \pm 5.66$ & $-3.95$ [$-8.75, +0.85$] & 360 & 0 & 0\\
+\bottomrule
+\end{tabularx}
+\end{table}
+If no effective action changes occur over the entire evaluation, a deterministic
+matched run with the same checkpoint should reproduce the no-LLM projected
+trajectory. Differences without effective action changes cannot establish deployment-time
+LLM benefit. Different training histories can still produce different policies,
+as assessed by Table~\ref{tab:factorial}.
+\end{document}

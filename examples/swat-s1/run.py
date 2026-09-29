@@ -2,6 +2,7 @@
 swat-s1 run.py
 """
 
+from mininet.node import OVSBridge
 from mininet.net import Mininet
 from mininet.cli import CLI
 from minicps.mcps import MiniCPS
@@ -41,7 +42,7 @@ class SwatS1CPS(MiniCPS):
 if __name__ == "__main__":
 
     topo = SwatTopo()
-    net = Mininet(topo=topo)
+    net = Mininet(topo=topo, switch = OVSBridge, controller = None)
 
     swat_s1_cps = SwatS1CPS(
         name='swat_s1',
