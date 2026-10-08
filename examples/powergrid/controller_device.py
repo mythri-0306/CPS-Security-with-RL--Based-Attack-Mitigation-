@@ -32,6 +32,8 @@ class GridControllerPLC(PLC):
         self.mode = mode.lower()
         self.integral_error = 0.0
         self.missed_cycles = 0
+        # Last successfully received frequency — held flat during communication loss
+        self.last_received_freq = float(NOMINAL_FREQ)
         super(GridControllerPLC, self).__init__(
             name=name,
             state=state,
@@ -67,6 +69,7 @@ class GridControllerPLC(PLC):
                         raw_freq = raw_freq[0]
 
                     frequency = float(raw_freq) / SCALE_FACTOR
+                    self.last_received_freq = frequency   # update held value on success
                     self.set(CONTROLLER_FREQ_TAG, f"{frequency:.4f}")
 
                     # 2. Execute Control Law
@@ -113,13 +116,28 @@ class GridControllerPLC(PLC):
             time.sleep(CONTROLLER_PERIOD_SEC)
 
     def _handle_timeout(self, err=None):
-        """Handle communication failure / packet timeout."""
+        """Handle communication failure / packet timeout.
+
+        Writes the held (last received) frequency value back to CONTROLLER_FREQ_TAG
+        so that physics.py logs the correct hold-last-value behaviour during
+        DoS / delay blackouts.  Without this write the DB retains the last
+        successfully written value, which may drift if a minority of packets
+        still arrive (e.g. 90% loss), producing a misleading fluctuating signal.
+        """
         self.missed_cycles += 1
         elapsed_loss_sec = self.missed_cycles * CONTROLLER_PERIOD_SEC
+
+        # Persist the held frequency so the CSV log shows the flat line correctly
+        try:
+            self.set(CONTROLLER_FREQ_TAG, f"{self.last_received_freq:.4f}")
+        except Exception:
+            pass
+
         if self.missed_cycles == TIMEOUT_MAX_CYCLES:
             print(f"WARNING [Controller PLC] Communication timeout threshold reached! "
                   f"Missed {self.missed_cycles} consecutive polls ({elapsed_loss_sec:.1f}s). "
-                  f"Sensor is unreachable (DoS/loss). Holding last setpoint: {self.current_setpoint:.2f} MW")
+                  f"Sensor is unreachable (DoS/loss). Holding last setpoint: {self.current_setpoint:.2f} MW "
+                  f"and last frequency: {self.last_received_freq:.4f} Hz")
         elif self.missed_cycles > TIMEOUT_MAX_CYCLES and self.missed_cycles % 10 == 0:
             print(f"WARNING [Controller PLC] Ongoing communication blackout: {elapsed_loss_sec:.1f}s without sensor telemetry.")
 

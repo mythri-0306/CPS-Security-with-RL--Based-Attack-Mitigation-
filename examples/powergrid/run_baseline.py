@@ -32,18 +32,19 @@ class PowerGridCPS(MiniCPS):
     """MiniCPS Orchestrator for Power Grid Simulation."""
 
     def __init__(self, name, net, duration=300.0, run_label="baseline_run1",
-                 interactive=False, no_disturbance=False):
+                 interactive=False, no_disturbance=False, mode="threshold"):
         self.name = name
         self.net = net
         self.duration = float(duration)
         self.run_label = run_label
         self.interactive = interactive
         self.no_disturbance = no_disturbance
+        self.mode = mode
 
         os.makedirs("logs", exist_ok=True)
 
         print("\n=======================================================")
-        print(f"  Starting Power Grid Simulation: {self.run_label} ({self.duration}s)")
+        print(f"  Starting Power Grid Simulation: {self.run_label} ({self.duration}s, mode: {self.mode})")
         print("=======================================================")
 
         # 1. Start Mininet Network
@@ -72,9 +73,9 @@ class PowerGridCPS(MiniCPS):
         )
         time.sleep(2.0)  # Allow Modbus server to bind
 
-        print("[Simulation] Launching Controller PLC on host 'controller'...\n")
+        print(f"[Simulation] Launching Controller PLC (mode: {self.mode}) on host 'controller'...\n")
         controller_proc = controller.popen(
-            f"{py_prefix}{py_exec} -u controller_device.py",
+            f"{py_prefix}{py_exec} -u controller_device.py --mode {self.mode}",
             shell=True,
             stdout=open("logs/controller.log", "w"),
             stderr=subprocess.STDOUT
@@ -153,6 +154,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Power Grid Frequency Control Simulation")
     parser.add_argument("--duration", type=float, default=300.0, help="Duration in seconds (default: 300)")
     parser.add_argument("--run-label", type=str, default="baseline_run1", help="Label for run (default: baseline_run1)")
+    parser.add_argument("--mode", type=str, default="threshold", choices=["threshold", "pi"],
+                        help="Control law mode: 'threshold' or 'pi' (default: threshold)")
     parser.add_argument("--cli", action="store_true", help="Launch interactive Mininet CLI")
     parser.add_argument("--no-disturbance", action="store_true", help="Disable step load disturbance at t=10s")
     args = parser.parse_args()
@@ -170,5 +173,6 @@ if __name__ == "__main__":
         duration=args.duration,
         run_label=args.run_label,
         interactive=args.cli,
-        no_disturbance=args.no_disturbance
+        no_disturbance=args.no_disturbance,
+        mode=args.mode
     )

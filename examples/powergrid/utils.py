@@ -40,7 +40,7 @@ DAMPING_D = 1.0               # Load-frequency damping coefficient D in p.u./Hz 
 # Threshold Control Rule Boundaries (Baseline #1)
 FREQ_LOW_THRESH = 49.80       # Lower threshold: ramp generation UP if f < 49.8 Hz
 FREQ_HIGH_THRESH = 50.20      # Upper threshold: ramp generation DOWN if f > 50.2 Hz
-RAMP_STEP = 0.50              # Generation setpoint increment/decrement per control cycle (MW)
+RAMP_STEP = 0.05              # Tuned generation increment/decrement per cycle (MW) for tight frequency containment
 
 # Proportional-Integral (PI) / Droop Control Parameters (Baseline #2)
 CONTROLLER_KP = 15.0          # Proportional gain (MW/Hz)

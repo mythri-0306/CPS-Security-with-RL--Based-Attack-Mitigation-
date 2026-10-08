@@ -7,6 +7,7 @@ PowerGridProcess continuous simulation loop using MiniCPS's state abstraction.
 
 import time
 import sys
+import argparse
 try:
     from minicps.devices import Device
 except ImportError:
