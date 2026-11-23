@@ -33,6 +33,7 @@ from sim_engine import (
     run_episode, DEFENSE_METHODS, ATTACK_UI_TO_ENV,
     INTENSITY_RANGES, NOMINAL_FREQ, SAFE_BAND_LOW, SAFE_BAND_HIGH, DT,
 )
+from grid_view import render_grid_view
 
 # ---------------------------------------------------------------------------
 # Page config & custom CSS
@@ -46,24 +47,29 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* ---------- Dark-gradient page background ---------- */
+/* ---------- Warm "ember" light background ---------- */
 [data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #0f0c29 0%, #1a1a2e 50%, #16213e 100%);
+    background: linear-gradient(135deg, #fff3ea 0%, #ffe9da 55%, #ffe0cd 100%);
 }
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1a1a2e 0%, #0f0c29 100%);
+    background: linear-gradient(180deg, #ffe7d6 0%, #ffd7bf 100%);
+    border-right: 1px solid #f3cdb3;
 }
+[data-testid="stHeader"] { background: transparent; }
+h1, h2, h3, h4, h5, h6 { color: #43281a !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 4px; }
+.stTabs [aria-selected="true"] { color: #ef6c1a !important; }
 
 /* ---------- Metric cards ---------- */
 .metric-card {
-    background: rgba(255,255,255,0.06);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.12);
+    background: #fffdfb;
+    border: 1px solid #f3d3ba;
     border-radius: 14px;
     padding: 16px 18px;
     text-align: center;
+    box-shadow: 0 2px 10px -6px rgba(180,80,20,.35);
 }
-.metric-card .label { font-size: 0.78rem; color: #94a3b8; margin-bottom: 4px; }
+.metric-card .label { font-size: 0.78rem; color: #a06a4a; margin-bottom: 4px; letter-spacing:.02em; }
 .metric-card .value { font-size: 1.45rem; font-weight: 700; }
 
 /* ---------- Status badges ---------- */
@@ -75,43 +81,46 @@ st.markdown("""
     font-size: 0.82rem;
     margin: 0 5px;
 }
-.badge-normal   { background: #06d6a0; color: #0f0c29; }
-.badge-attack   { background: #ff006e; color: #fff; animation: pulse 1s infinite; }
-.badge-distrust { background: #ffd166; color: #0f0c29; }
-.badge-oob      { background: #ef476f; color: #fff; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.65} }
+.badge-normal   { background: #e9f7ef; color: #15935f; border:1px solid #bfe6d1; }
+.badge-attack   { background: #dc2626; color: #fff; animation: pulse 1s infinite; }
+.badge-distrust { background: #fff0d6; color: #b4740c; border:1px solid #f5d79a; }
+.badge-oob      { background: #fde3e0; color: #c42618; border:1px solid #f6b9b1; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
 
 /* ---------- Limitations box ---------- */
 .limits-box {
-    background: rgba(239,71,111,0.08);
-    border-left: 4px solid #ef476f;
+    background: rgba(239,108,26,0.08);
+    border-left: 4px solid #ef6c1a;
     border-radius: 8px;
     padding: 14px 18px;
     margin-top: 12px;
     font-size: 0.88rem;
+    color: #5a3420;
 }
+.limits-box b { color: #c2410c; }
 
 /* ---------- Table highlight ---------- */
-.best-cell { background: rgba(6,214,160,0.22) !important; font-weight: 700; }
+.best-cell { background: rgba(21,147,95,0.16) !important; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Plotly colour palette
+# Plotly colour palette  (light "ember" theme)
 # ---------------------------------------------------------------------------
-C_TRUE  = "#00B4D8"
-C_MEAS  = "#FF6B6B"
-C_PRED  = "#06D6A0"
-C_BAND  = "#FFC107"
-C_ATK   = "rgba(255,0,110,0.12)"
-C_TRUST = "#06d6a0"
-C_DISTR = "#ff006e"
+C_TRUE  = "#ef6c1a"   # true frequency  (hero orange)
+C_MEAS  = "#e0a000"   # sensor measured (gold)
+C_PRED  = "#0d9488"   # kalman estimate (teal — the one cool accent)
+C_BAND  = "#15935f"   # safe band       (green)
+C_ATK   = "rgba(220,38,38,0.10)"   # attack window shading
+C_TRUST = "#15935f"   # defender trusts   (green)
+C_DISTR = "#dc2626"   # defender distrusts (red)
+C_INK   = "#43281a"   # warm dark text
 
 PLOTLY_LAYOUT = dict(
-    template="plotly_dark",
+    template="plotly_white",
     paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Inter, sans-serif"),
+    plot_bgcolor="rgba(255,253,251,0.65)",
+    font=dict(family="Inter, sans-serif", color=C_INK),
     margin=dict(l=50, r=20, t=40, b=30),
 )
 
@@ -130,7 +139,7 @@ def build_freq_chart(traj: dict, up_to: int | None = None, height: int = 420) ->
     fig = go.Figure()
     # Safe-band shading
     fig.add_hrect(y0=SAFE_BAND_LOW, y1=SAFE_BAND_HIGH,
-                  fillcolor="rgba(255,193,7,0.08)", line_width=0)
+                  fillcolor="rgba(21,147,95,0.09)", line_width=0)
     fig.add_hline(y=SAFE_BAND_LOW,  line=dict(color=C_BAND, width=1, dash="dot"))
     fig.add_hline(y=SAFE_BAND_HIGH, line=dict(color=C_BAND, width=1, dash="dot"))
     # Attack window
@@ -138,7 +147,7 @@ def build_freq_chart(traj: dict, up_to: int | None = None, height: int = 420) ->
         fig.add_vrect(x0=att_start_t, x1=att_end_t,
                       fillcolor=C_ATK, line_width=0,
                       annotation_text="Attack", annotation_position="top left",
-                      annotation_font_color="#ff006e")
+                      annotation_font_color="#dc2626")
     # Traces
     fig.add_trace(go.Scatter(x=t, y=traj["f_true"][:n],  mode="lines",
                              name="True Freq",     line=dict(color=C_TRUE, width=2)))
@@ -178,7 +187,7 @@ def build_action_strip(traj: dict, up_to: int | None = None, height: int = 90) -
 # ---------------------------------------------------------------------------
 # Helper: metric card HTML
 # ---------------------------------------------------------------------------
-def metric_html(label: str, value: str, colour: str = "#e0e0e0") -> str:
+def metric_html(label: str, value: str, colour: str = "#43281a") -> str:
     return (f'<div class="metric-card">'
             f'<div class="label">{label}</div>'
             f'<div class="value" style="color:{colour}">{value}</div></div>')
@@ -277,20 +286,28 @@ with tab1:
     show_all_clicked = bcol4.button("⏩ Show All", use_container_width=True)
 
     if run_clicked:
-        with st.spinner("Running episode…"):
-            cached = None
-            if use_cache:
-                cached = load_cached(attack_type, defense_method, env_seed,
-                                     intensity_val, attack_start)
-            if cached is not None:
-                st.session_state.traj = cached
-            else:
-                st.session_state.traj = run_episode(
-                    attack_type, defense_method, env_seed,
-                    intensity_val, attack_start, dqn_seed,
-                )
-        st.session_state.anim_step = 0
-        st.session_state.playing = False
+        try:
+            with st.spinner("Running episode… (first run loads the DQN model, ~20 s)"):
+                cached = None
+                if use_cache:
+                    cached = load_cached(attack_type, defense_method, env_seed,
+                                         intensity_val, attack_start)
+                if cached is not None:
+                    st.session_state.traj = cached
+                else:
+                    st.session_state.traj = run_episode(
+                        attack_type, defense_method, env_seed,
+                        intensity_val, attack_start, dqn_seed,
+                    )
+            # Show the full trajectory immediately so the chart isn't blank.
+            # (At step 0 only one point is plotted, which draws nothing — the
+            #  bug that made the chart look empty after Run.)
+            st.session_state.anim_step = len(st.session_state.traj["t"]) - 1
+            st.session_state.playing = False
+        except Exception as e:
+            st.session_state.traj = None
+            st.error(f"Simulation failed: {e}")
+            st.exception(e)
 
     if play_clicked:
         st.session_state.playing = not st.session_state.playing
@@ -308,6 +325,11 @@ with tab1:
 
         # Status badges
         st.markdown(status_badges(traj, cur), unsafe_allow_html=True)
+
+        # ----- Animated power-grid "setup" view (SVG schematic, autoplay) -----
+        _atk_label = {"stealthy_drift": "stealthy drift",
+                      "telemetry_freeze": "telemetry freeze"}.get(attack_type, attack_type)
+        render_grid_view(traj, _atk_label, defense_method, height=400)
 
         # Frequency chart
         st.plotly_chart(build_freq_chart(traj, up_to=cur), use_container_width=True, key="freq_chart")
@@ -331,13 +353,13 @@ with tab1:
 
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.markdown(metric_html("Time OOB", f"{oob_so_far*DT:.1f} s",
-                                "#ef476f" if oob_so_far > 0 else C_TRUST), unsafe_allow_html=True)
+                                "#dc2626" if oob_so_far > 0 else C_TRUST), unsafe_allow_html=True)
         m2.markdown(metric_html("Max Deviation", f"{max_dev_so_far:.3f} Hz",
-                                "#ef476f" if max_dev_so_far > 0.2 else C_TRUST), unsafe_allow_html=True)
+                                "#dc2626" if max_dev_so_far > 0.2 else C_TRUST), unsafe_allow_html=True)
         det_str = f"{traj['detection_delay']} steps" if traj["detection_delay"] is not None else "—"
-        m3.markdown(metric_html("Detection Delay", det_str, "#ffd166"), unsafe_allow_html=True)
-        m4.markdown(metric_html("Clean Distrust", f"{cd_rate:.1f} %", "#00b4d8"), unsafe_allow_html=True)
-        m5.markdown(metric_html("Episode Return", f"{traj['episode_return']:.1f}", "#e0e0e0"),
+        m3.markdown(metric_html("Detection Delay", det_str, "#b4740c"), unsafe_allow_html=True)
+        m4.markdown(metric_html("Clean Distrust", f"{cd_rate:.1f} %", "#ef6c1a"), unsafe_allow_html=True)
+        m5.markdown(metric_html("Episode Return", f"{traj['episode_return']:.1f}", "#43281a"),
                     unsafe_allow_html=True)
 
         # Auto-advance animation
@@ -485,9 +507,9 @@ with tab3:
             methods = agg["method"].unique()
 
             palette = [
-                "#ef476f", "#ffd166", "#06d6a0", "#118ab2",
-                "#073b4c", "#8338ec", "#ff006e", "#3a86a7",
-                "#fb5607", "#ffbe0b",
+                "#ef6c1a", "#dc2626", "#e0a000", "#0d9488",
+                "#b45309", "#9a3412", "#f97316", "#c2410c",
+                "#15935f", "#e11d48",
             ]
 
             fig_bar = go.Figure()
@@ -540,10 +562,10 @@ with tab3:
             comp_agg["std_oob"] = comp_agg["std_oob"].fillna(0)
 
             fig_comp = go.Figure()
-            comp_palette = {"Kalman": "#06d6a0", "Detector": "#ffd166", "RL": "#00b4d8"}
+            comp_palette = {"Kalman": "#0d9488", "Detector": "#e0a000", "RL": "#ef6c1a"}
             for method in comp_agg["method"].unique():
                 sub = comp_agg[comp_agg["method"] == method]
-                col = "#00b4d8"
+                col = "#ef6c1a"
                 for k, v in comp_palette.items():
                     if k in method:
                         col = v

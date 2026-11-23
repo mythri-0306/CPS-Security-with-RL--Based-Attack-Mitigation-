@@ -1,0 +1,8 @@
+# Light "ember" theme — warm cream background, orange/red accents.
+[theme]
+base = "light"
+primaryColor = "#ef6c1a"
+backgroundColor = "#fff6ee"
+secondaryBackgroundColor = "#ffe8d6"
+textColor = "#43281a"
+font = "sans serif"
