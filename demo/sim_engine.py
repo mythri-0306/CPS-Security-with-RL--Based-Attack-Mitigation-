@@ -54,7 +54,7 @@ INTENSITY_RANGES = {                       # training-range sliders for the UI
 
 DEFENSE_METHODS = [
     "No Defense", "Rule-Based", "Kalman-Only",
-    "Detector-Timing", "RL DQN", "Oracle",
+    "Detector-Timing", "RL DQN",
 ]
 
 

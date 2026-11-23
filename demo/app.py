@@ -116,6 +116,11 @@ C_TRUST = "#15935f"   # defender trusts   (green)
 C_DISTR = "#dc2626"   # defender distrusts (red)
 C_INK   = "#43281a"   # warm dark text
 
+# Defenses whose decision logic actually uses the Kalman filter.
+# (No Defense = always trust; Rule-Based = band clamp + jump reject;
+#  Oracle = perfect attack knowledge — none of these use the estimate.)
+USES_KALMAN = {"Kalman-Only", "Detector-Timing", "RL DQN"}
+
 PLOTLY_LAYOUT = dict(
     template="plotly_white",
     paper_bgcolor="rgba(0,0,0,0)",
@@ -153,10 +158,10 @@ def build_freq_chart(traj: dict, up_to: int | None = None, height: int = 420) ->
                              name="True Freq",     line=dict(color=C_TRUE, width=2)))
     fig.add_trace(go.Scatter(x=t, y=traj["f_meas"][:n],  mode="lines",
                              name="Sensor (meas)", line=dict(color=C_MEAS, width=1.5, dash="dot")))
-    # Only show the Kalman estimate for defenses that actually use it.
-    # "No Defense" always trusts the sensor and never falls back to the
-    # filter, so plotting its Kalman line is misleading — hide it there.
-    if traj.get("defense_method") != "No Defense":
+    # Only show the Kalman estimate for defenses whose logic actually uses it
+    # (see USES_KALMAN). No Defense, Rule-Based and Oracle don't, so plotting
+    # their Kalman line would be misleading.
+    if traj.get("defense_method") in USES_KALMAN:
         fig.add_trace(go.Scatter(x=t, y=traj["f_pred"][:n],  mode="lines",
                                  name="Kalman Pred",   line=dict(color=C_PRED, width=1.5, dash="dash")))
     fig.update_layout(
@@ -435,12 +440,12 @@ with tab2:
                                      line=dict(color=C_TRUE, width=1.5),
                                      name="True Freq", showlegend=(idx == 0)),
                           row=r, col=c)
-            # Kalman pred — only for defenses that actually use the estimate
-            # (No Defense always trusts the sensor, so its filter is unused).
-            if dm != "No Defense":
+            # Kalman pred — only for defenses whose logic uses the estimate
+            # (Kalman-Only, Detector-Timing, RL DQN); others don't use it.
+            if dm in USES_KALMAN:
                 fig.add_trace(go.Scatter(x=tr["t"], y=tr["f_pred"], mode="lines",
                                          line=dict(color=C_PRED, width=1, dash="dash"),
-                                         name="Kalman Pred", showlegend=(idx == 1)),
+                                         name="Kalman Pred", showlegend=(dm == "Kalman-Only")),
                               row=r, col=c)
         fig.update_layout(
             **PLOTLY_LAYOUT,
@@ -491,6 +496,11 @@ with tab3:
     # ---------- Load final_results.csv ----------
     if os.path.exists(csv_path):
         df_all = pd.read_csv(csv_path)
+
+        # Hide Oracle from the UI
+        if "method" in df_all.columns:
+            df_all = df_all[~df_all["method"].str.contains(
+                "Oracle", case=False, na=False)]
 
         # Rename delay/dos → telemetry_freeze for display
         if "attack_type" in df_all.columns:
