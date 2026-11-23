@@ -153,8 +153,12 @@ def build_freq_chart(traj: dict, up_to: int | None = None, height: int = 420) ->
                              name="True Freq",     line=dict(color=C_TRUE, width=2)))
     fig.add_trace(go.Scatter(x=t, y=traj["f_meas"][:n],  mode="lines",
                              name="Sensor (meas)", line=dict(color=C_MEAS, width=1.5, dash="dot")))
-    fig.add_trace(go.Scatter(x=t, y=traj["f_pred"][:n],  mode="lines",
-                             name="Kalman Pred",   line=dict(color=C_PRED, width=1.5, dash="dash")))
+    # Only show the Kalman estimate for defenses that actually use it.
+    # "No Defense" always trusts the sensor and never falls back to the
+    # filter, so plotting its Kalman line is misleading — hide it there.
+    if traj.get("defense_method") != "No Defense":
+        fig.add_trace(go.Scatter(x=t, y=traj["f_pred"][:n],  mode="lines",
+                                 name="Kalman Pred",   line=dict(color=C_PRED, width=1.5, dash="dash")))
     fig.update_layout(
         **PLOTLY_LAYOUT,
         height=height,
@@ -431,11 +435,13 @@ with tab2:
                                      line=dict(color=C_TRUE, width=1.5),
                                      name="True Freq", showlegend=(idx == 0)),
                           row=r, col=c)
-            # Kalman pred
-            fig.add_trace(go.Scatter(x=tr["t"], y=tr["f_pred"], mode="lines",
-                                     line=dict(color=C_PRED, width=1, dash="dash"),
-                                     name="Kalman Pred", showlegend=(idx == 0)),
-                          row=r, col=c)
+            # Kalman pred — only for defenses that actually use the estimate
+            # (No Defense always trusts the sensor, so its filter is unused).
+            if dm != "No Defense":
+                fig.add_trace(go.Scatter(x=tr["t"], y=tr["f_pred"], mode="lines",
+                                         line=dict(color=C_PRED, width=1, dash="dash"),
+                                         name="Kalman Pred", showlegend=(idx == 1)),
+                              row=r, col=c)
         fig.update_layout(
             **PLOTLY_LAYOUT,
             height=520,
