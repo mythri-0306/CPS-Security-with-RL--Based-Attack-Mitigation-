@@ -1,24 +1,24 @@
 """
-Grid-Defense Demo – Streamlit App  (demo/app.py)
+Grid-Defense Demo -- Streamlit App  (demo/app.py)
+=================================================
 
-Three-tab interactive dashboard for demonstrating RL-based cyber-physical
-defense on a simulated power grid.  Uses the **real** GridDefenseEnv,
-Kalman filter, Mythri's baselines, Detector-Timing heuristic, and the
-saved DQN models – no copied physics or fabricated numbers.
+Scroll-through page:
+  1. Animated title / landing section.
+  2. Attack controls (type, strength, onset).
+  3. Live substation simulation + five-defense frequency graph (one synced
+     Play / Pause / Restart).
+
+Theme: glacier blue + navy + lemon.  Real GridDefenseEnv, no fabricated numbers.
 
 Run:  streamlit run demo/app.py
 """
 
-import os, sys, time, pickle
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import os
+import sys
 import streamlit as st
+import streamlit.components.v1 as components
 
-# ---------------------------------------------------------------------------
-# Path bootstrap
-# ---------------------------------------------------------------------------
+# --- path bootstrap (root config.py must win over examples/powergrid) -------
 _DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_DEMO_DIR)
 if _ROOT_DIR not in sys.path:
@@ -26,606 +26,151 @@ if _ROOT_DIR not in sys.path:
 if _DEMO_DIR not in sys.path:
     sys.path.insert(1, _DEMO_DIR)
 _PG_DIR = os.path.join(_ROOT_DIR, "examples", "powergrid")
-if os.path.exists(_PG_DIR) and _PG_DIR not in sys.path:
+if os.path.isdir(_PG_DIR) and _PG_DIR not in sys.path:
     sys.path.append(_PG_DIR)
 
-from sim_engine import (
-    run_episode, DEFENSE_METHODS, ATTACK_UI_TO_ENV,
-    INTENSITY_RANGES, NOMINAL_FREQ, SAFE_BAND_LOW, SAFE_BAND_HIGH, DT,
-)
-from grid_view import render_grid_view
+from sim_engine import run_episode, DEFENSE_METHODS
+from stage import render_stage
+
+ENV_SEED = 42
+DQN_SEED = 0
+
+# label -> (engine key, intensity label, lo, hi, default, step, fmt)
+ATTACKS = {
+    "Spoof":            ("spoof",            "Spoofed frequency (Hz)", 48.00, 49.20, 48.50, 0.05, "%.2f"),
+    "Stealthy drift":   ("stealthy_drift",   "Drift rate (Hz/s)",       0.02,  0.08,  0.05, 0.005, "%.3f"),
+    "Replay":           ("replay",           "Replay window (s)",       5.0,  15.0,  10.0, 1.0,  "%.0f"),
+    "Telemetry freeze": ("telemetry_freeze", None, 0, 0, 0, 0, None),
+}
 
 # ---------------------------------------------------------------------------
-# Page config & custom CSS
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Grid Defense – RL CPS Demo",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Power-Grid Cyber-Attack Simulation",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-/* ---------- Warm "ember" light background ---------- */
-[data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #fff3ea 0%, #ffe9da 55%, #ffe0cd 100%);
-}
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #ffe7d6 0%, #ffd7bf 100%);
-    border-right: 1px solid #f3cdb3;
-}
-[data-testid="stHeader"] { background: transparent; }
-h1, h2, h3, h4, h5, h6 { color: #43281a !important; }
-.stTabs [data-baseweb="tab-list"] { gap: 4px; }
-.stTabs [aria-selected="true"] { color: #ef6c1a !important; }
-
-/* ---------- Metric cards ---------- */
-.metric-card {
-    background: #fffdfb;
-    border: 1px solid #f3d3ba;
-    border-radius: 14px;
-    padding: 16px 18px;
-    text-align: center;
-    box-shadow: 0 2px 10px -6px rgba(180,80,20,.35);
-}
-.metric-card .label { font-size: 0.78rem; color: #a06a4a; margin-bottom: 4px; letter-spacing:.02em; }
-.metric-card .value { font-size: 1.45rem; font-weight: 700; }
-
-/* ---------- Status badges ---------- */
-.badge {
-    display: inline-block;
-    padding: 5px 14px;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 0.82rem;
-    margin: 0 5px;
-}
-.badge-normal   { background: #e9f7ef; color: #15935f; border:1px solid #bfe6d1; }
-.badge-attack   { background: #dc2626; color: #fff; animation: pulse 1s infinite; }
-.badge-distrust { background: #fff0d6; color: #b4740c; border:1px solid #f5d79a; }
-.badge-oob      { background: #fde3e0; color: #c42618; border:1px solid #f6b9b1; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
-
-/* ---------- Limitations box ---------- */
-.limits-box {
-    background: rgba(239,108,26,0.08);
-    border-left: 4px solid #ef6c1a;
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin-top: 12px;
-    font-size: 0.88rem;
-    color: #5a3420;
-}
-.limits-box b { color: #c2410c; }
-
-/* ---------- Table highlight ---------- */
-.best-cell { background: rgba(21,147,95,0.16) !important; font-weight: 700; }
+  #MainMenu, footer, header {visibility:hidden;}
+  [data-testid="stSidebar"]{display:none;}
+  .block-container{padding-top:0rem;max-width:1180px;}
+  html, body, [class*="css"]{font-family:Inter,-apple-system,Segoe UI,sans-serif;}
+  [data-testid="stAppViewContainer"]{background:#eef5f9;}
+  .sec-t{font-size:1.35rem;font-weight:800;color:#0E2A47;margin:10px 0 2px;}
+  .sec-s{font-size:.92rem;color:#5b7488;margin-bottom:10px;}
+  label{font-weight:600 !important;color:#2E6E8E !important;}
+  div[data-baseweb="select"]>div{border-radius:9px;border-color:#cfe2ec;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Plotly colour palette  (light "ember" theme)
-# ---------------------------------------------------------------------------
-C_TRUE  = "#ef6c1a"   # true frequency  (hero orange)
-C_MEAS  = "#e0a000"   # sensor measured (gold)
-C_PRED  = "#0d9488"   # kalman estimate (teal — the one cool accent)
-C_BAND  = "#15935f"   # safe band       (green)
-C_ATK   = "rgba(220,38,38,0.10)"   # attack window shading
-C_TRUST = "#15935f"   # defender trusts   (green)
-C_DISTR = "#dc2626"   # defender distrusts (red)
-C_INK   = "#43281a"   # warm dark text
-
-# Defenses whose decision logic actually uses the Kalman filter.
-# (No Defense = always trust; Rule-Based = band clamp + jump reject;
-#  Oracle = perfect attack knowledge — none of these use the estimate.)
-USES_KALMAN = {"Kalman-Only", "Detector-Timing", "RL DQN"}
-
-PLOTLY_LAYOUT = dict(
-    template="plotly_white",
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(255,253,251,0.65)",
-    font=dict(family="Inter, sans-serif", color=C_INK),
-    margin=dict(l=50, r=20, t=40, b=30),
-)
-
-# ---------------------------------------------------------------------------
-# Helper: build the main frequency chart up to step N
-# ---------------------------------------------------------------------------
-def build_freq_chart(traj: dict, up_to: int | None = None, height: int = 420) -> go.Figure:
-    """Return a Plotly figure of the trajectory up to step `up_to`."""
-    n = len(traj["t"]) if up_to is None else min(up_to + 1, len(traj["t"]))
-    t = traj["t"][:n]
-    # Attack window shading
-    att = traj["attack_active"][:n].astype(bool)
-    att_start_t = t[att][0] if att.any() else None
-    att_end_t   = t[att][-1] if att.any() else None
-
-    fig = go.Figure()
-    # Safe-band shading
-    fig.add_hrect(y0=SAFE_BAND_LOW, y1=SAFE_BAND_HIGH,
-                  fillcolor="rgba(21,147,95,0.09)", line_width=0)
-    fig.add_hline(y=SAFE_BAND_LOW,  line=dict(color=C_BAND, width=1, dash="dot"))
-    fig.add_hline(y=SAFE_BAND_HIGH, line=dict(color=C_BAND, width=1, dash="dot"))
-    # Attack window
-    if att_start_t is not None:
-        fig.add_vrect(x0=att_start_t, x1=att_end_t,
-                      fillcolor=C_ATK, line_width=0,
-                      annotation_text="Attack", annotation_position="top left",
-                      annotation_font_color="#dc2626")
-    # Traces
-    fig.add_trace(go.Scatter(x=t, y=traj["f_true"][:n],  mode="lines",
-                             name="True Freq",     line=dict(color=C_TRUE, width=2)))
-    fig.add_trace(go.Scatter(x=t, y=traj["f_meas"][:n],  mode="lines",
-                             name="Sensor (meas)", line=dict(color=C_MEAS, width=1.5, dash="dot")))
-    # Only show the Kalman estimate for defenses whose logic actually uses it
-    # (see USES_KALMAN). No Defense, Rule-Based and Oracle don't, so plotting
-    # their Kalman line would be misleading.
-    if traj.get("defense_method") in USES_KALMAN:
-        fig.add_trace(go.Scatter(x=t, y=traj["f_pred"][:n],  mode="lines",
-                                 name="Kalman Pred",   line=dict(color=C_PRED, width=1.5, dash="dash")))
-    fig.update_layout(
-        **PLOTLY_LAYOUT,
-        height=height,
-        xaxis_title="Time (s)",
-        yaxis_title="Frequency (Hz)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-    )
-    return fig
-
-
-def build_action_strip(traj: dict, up_to: int | None = None, height: int = 90) -> go.Figure:
-    """Colour strip showing defender actions over time."""
-    n = len(traj["t"]) if up_to is None else min(up_to + 1, len(traj["t"]))
-    t = traj["t"][:n]
-    act = traj["action"][:n]
-    colours = [C_TRUST if a == 0 else C_DISTR for a in act]
-    fig = go.Figure(go.Bar(x=t, y=[1]*len(t), marker_color=colours,
-                           hovertext=["Trust" if a == 0 else "Distrust" for a in act]))
-    fig.update_layout(
-        **PLOTLY_LAYOUT,
-        height=height,
-        xaxis_title="Time (s)",
-        yaxis=dict(visible=False),
-        showlegend=False,
-        bargap=0,
-    )
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Helper: metric card HTML
-# ---------------------------------------------------------------------------
-def metric_html(label: str, value: str, colour: str = "#43281a") -> str:
-    return (f'<div class="metric-card">'
-            f'<div class="label">{label}</div>'
-            f'<div class="value" style="color:{colour}">{value}</div></div>')
-
-
-# ---------------------------------------------------------------------------
-# Helper: status badges
-# ---------------------------------------------------------------------------
-def status_badges(traj: dict, step_idx: int) -> str:
-    badges = []
-    if step_idx < len(traj["attack_active"]):
-        if traj["attack_active"][step_idx]:
-            badges.append('<span class="badge badge-attack">⚠ ATTACK ACTIVE</span>')
-        else:
-            badges.append('<span class="badge badge-normal">✔ NORMAL</span>')
-        if traj["action"][step_idx] == 1:
-            badges.append('<span class="badge badge-distrust">🛡 DEFENDER DISTRUSTING</span>')
-        if step_idx < len(traj["oob"]) and traj["oob"][step_idx]:
-            badges.append('<span class="badge badge-oob">⚡ FREQ OUT OF BAND</span>')
-    return " ".join(badges)
-
-
-# ---------------------------------------------------------------------------
-# Cache helpers
-# ---------------------------------------------------------------------------
-CACHE_DIR = os.path.join(_DEMO_DIR, "cache")
-
-def _cache_key(attack_type, defense_method, seed, intensity, attack_start):
-    int_str = f"{intensity:.4f}" if intensity is not None else "default"
-    return f"{attack_type}__{defense_method}__{seed}__{int_str}__{attack_start:.1f}.pkl"
-
-def load_cached(attack_type, defense_method, seed, intensity, attack_start):
-    fp = os.path.join(CACHE_DIR, _cache_key(attack_type, defense_method, seed, intensity, attack_start))
-    if os.path.exists(fp):
-        with open(fp, "rb") as f:
-            return pickle.load(f)
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# SIDEBAR  (shared parameters)
-# ═══════════════════════════════════════════════════════════════════════════
-st.sidebar.title("⚡ Grid Defense Demo")
-st.sidebar.caption("RL-based Cyber-Physical Security")
-
-use_cache = st.sidebar.toggle("Use cached runs", value=False,
-                               help="Load pre-computed trajectories for instant display")
-
-attack_options = list(ATTACK_UI_TO_ENV.keys())
-attack_type = st.sidebar.selectbox("Attack type", attack_options, index=1)
-
-# Intensity slider (hidden for none / telemetry_freeze)
-intensity_val = None
-if attack_type not in ("none", "telemetry_freeze"):
-    lo, hi = INTENSITY_RANGES[attack_type]
-    unit = {"spoof": "Hz", "stealthy_drift": "Hz/s", "replay": "s"}.get(attack_type, "")
-    intensity_val = st.sidebar.slider(
-        f"Intensity ({unit})", min_value=float(lo), max_value=float(hi),
-        value=float((lo + hi) / 2), step=float((hi - lo) / 40),
-    )
-else:
-    if attack_type == "telemetry_freeze":
-        st.sidebar.info("Telemetry freeze holds the last valid reading; intensity is not used.")
-
-attack_start = st.sidebar.slider("Attack start (s)", 10.0, 30.0, 20.0, 1.0)
-env_seed = st.sidebar.number_input("Env seed", 0, 100000, 42)
-dqn_seed = st.sidebar.selectbox("DQN model seed", [0, 1, 2, 3, 4], index=0)
-
-speed_map = {"Slow": (2, 0.15), "Normal": (5, 0.08), "Fast": (10, 0.04), "Very Fast": (25, 0.015)}
-play_speed = st.sidebar.select_slider("Play speed", list(speed_map.keys()), value="Normal")
-step_skip, frame_delay = speed_map[play_speed]
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TABS
-# ═══════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["🎬 Live Attack Simulation", "📊 Compare Defenses", "📈 Results"])
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 1 – Live Attack Simulation
-# ═══════════════════════════════════════════════════════════════════════════
-with tab1:
-    defense_method = st.selectbox("Defense method", DEFENSE_METHODS, index=4,
-                                  key="t1_defense")
-    # ---------- Init session state ----------
-    for k, v in [("traj", None), ("playing", False), ("anim_step", 0)]:
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-    # ---------- Run / control buttons ----------
-    bcol1, bcol2, bcol3, bcol4 = st.columns(4)
-    run_clicked = bcol1.button("▶ Run Simulation", use_container_width=True, type="primary")
-    play_clicked = bcol2.button("⏯ Play / Pause", use_container_width=True)
-    restart_clicked = bcol3.button("🔄 Restart", use_container_width=True)
-    show_all_clicked = bcol4.button("⏩ Show All", use_container_width=True)
-
-    if run_clicked:
-        try:
-            with st.spinner("Running episode… (first run loads the DQN model, ~20 s)"):
-                cached = None
-                if use_cache:
-                    cached = load_cached(attack_type, defense_method, env_seed,
-                                         intensity_val, attack_start)
-                if cached is not None:
-                    st.session_state.traj = cached
-                else:
-                    st.session_state.traj = run_episode(
-                        attack_type, defense_method, env_seed,
-                        intensity_val, attack_start, dqn_seed,
-                    )
-            # Show the full trajectory immediately so the chart isn't blank.
-            # (At step 0 only one point is plotted, which draws nothing — the
-            #  bug that made the chart look empty after Run.)
-            st.session_state.anim_step = len(st.session_state.traj["t"]) - 1
-            st.session_state.playing = False
-        except Exception as e:
-            st.session_state.traj = None
-            st.error(f"Simulation failed: {e}")
-            st.exception(e)
-
-    if play_clicked:
-        st.session_state.playing = not st.session_state.playing
-    if restart_clicked:
-        st.session_state.anim_step = 0
-        st.session_state.playing = False
-    if show_all_clicked and st.session_state.traj is not None:
-        st.session_state.anim_step = len(st.session_state.traj["t"]) - 1
-        st.session_state.playing = False
-
-    traj = st.session_state.traj
-    if traj is not None:
-        total_frames = len(traj["t"])
-        cur = min(st.session_state.anim_step, total_frames - 1)
-
-        # Status badges
-        st.markdown(status_badges(traj, cur), unsafe_allow_html=True)
-
-        # ----- Animated power-grid "setup" view (SVG schematic, autoplay) -----
-        _atk_label = {"stealthy_drift": "stealthy drift",
-                      "telemetry_freeze": "telemetry freeze"}.get(attack_type, attack_type)
-        render_grid_view(traj, _atk_label, defense_method, height=400)
-
-        # Frequency chart
-        st.plotly_chart(build_freq_chart(traj, up_to=cur), use_container_width=True, key="freq_chart")
-
-        # Action strip
-        st.caption("Defender action  (🟢 Trust  /  🔴 Distrust)")
-        st.plotly_chart(build_action_strip(traj, up_to=cur), use_container_width=True, key="act_strip")
-
-        # Progress slider (manual scrub)
-        new_step = st.slider("Timestep", 0, total_frames - 1, cur, key="step_slider")
-        if new_step != cur:
-            st.session_state.anim_step = new_step
-
-        # Metric cards
-        oob_so_far = int(traj["oob"][:cur+1].sum())
-        max_dev_so_far = float(np.max(np.abs(traj["f_true"][:cur+1] - NOMINAL_FREQ)))
-        act_arr = traj["action"][:cur+1]
-        att_arr = traj["attack_active"][:cur+1]
-        clean_mask = ~att_arr.astype(bool)
-        cd_rate = (act_arr[clean_mask].sum() / max(1, clean_mask.sum()) * 100) if clean_mask.any() else 0.0
-
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.markdown(metric_html("Time OOB", f"{oob_so_far*DT:.1f} s",
-                                "#dc2626" if oob_so_far > 0 else C_TRUST), unsafe_allow_html=True)
-        m2.markdown(metric_html("Max Deviation", f"{max_dev_so_far:.3f} Hz",
-                                "#dc2626" if max_dev_so_far > 0.2 else C_TRUST), unsafe_allow_html=True)
-        det_str = f"{traj['detection_delay']} steps" if traj["detection_delay"] is not None else "—"
-        m3.markdown(metric_html("Detection Delay", det_str, "#b4740c"), unsafe_allow_html=True)
-        m4.markdown(metric_html("Clean Distrust", f"{cd_rate:.1f} %", "#ef6c1a"), unsafe_allow_html=True)
-        m5.markdown(metric_html("Episode Return", f"{traj['episode_return']:.1f}", "#43281a"),
-                    unsafe_allow_html=True)
-
-        # Auto-advance animation
-        if st.session_state.playing and cur < total_frames - 1:
-            time.sleep(frame_delay)
-            st.session_state.anim_step = min(cur + step_skip, total_frames - 1)
-            st.rerun()
-        elif st.session_state.playing and cur >= total_frames - 1:
-            st.session_state.playing = False
-
-    else:
-        st.info("👆 Click **Run Simulation** to generate a trajectory.")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 2 – Compare Defenses
-# ═══════════════════════════════════════════════════════════════════════════
-with tab2:
-    st.subheader("Side-by-Side Defense Comparison")
-    st.caption("Same attack scenario – all defenses evaluated on the same seed.")
-    if attack_type == "telemetry_freeze":
-        st.markdown(
-            "ℹ️ **telemetry_freeze**: a full stale-hold of the last valid measurement. "
-            "Both `delay` and `dos` in the env share this identical code path; the "
-            "configured latency / drop-rate parameters are not used.",
-            help="Telemetry freeze holds the last valid reading indefinitely, "
-                 "incrementing packet_age each step.",
-        )
-
-    if st.button("🚀 Run All Defenses", key="run_compare", type="primary"):
-        results = {}
-        prog = st.progress(0, text="Running defenses…")
-        for i, dm in enumerate(DEFENSE_METHODS):
-            try:
-                cached = None
-                if use_cache:
-                    cached = load_cached(attack_type, dm, env_seed,
-                                         intensity_val, attack_start)
-                if cached is not None:
-                    results[dm] = cached
-                else:
-                    results[dm] = run_episode(
-                        attack_type, dm, env_seed,
-                        intensity_val, attack_start, dqn_seed,
-                    )
-            except Exception as e:
-                st.warning(f"⚠ {dm}: {e}")
-            prog.progress((i + 1) / len(DEFENSE_METHODS), text=f"{dm} done")
-        prog.empty()
-        st.session_state.compare_results = results
-
-    if "compare_results" in st.session_state and st.session_state.compare_results:
-        results = st.session_state.compare_results
-
-        # Small-multiples grid  (2 rows × 3 cols)
-        fig = make_subplots(
-            rows=2, cols=3,
-            subplot_titles=list(results.keys()),
-            vertical_spacing=0.12, horizontal_spacing=0.06,
-        )
-        for idx, (dm, tr) in enumerate(results.items()):
-            r, c = divmod(idx, 3)
-            r += 1; c += 1
-            # Safe band
-            fig.add_hline(y=SAFE_BAND_LOW,  line=dict(color=C_BAND, width=0.7, dash="dot"), row=r, col=c)
-            fig.add_hline(y=SAFE_BAND_HIGH, line=dict(color=C_BAND, width=0.7, dash="dot"), row=r, col=c)
-            # True freq
-            fig.add_trace(go.Scatter(x=tr["t"], y=tr["f_true"], mode="lines",
-                                     line=dict(color=C_TRUE, width=1.5),
-                                     name="True Freq", showlegend=(idx == 0)),
-                          row=r, col=c)
-            # Kalman pred — only for defenses whose logic uses the estimate
-            # (Kalman-Only, Detector-Timing, RL DQN); others don't use it.
-            if dm in USES_KALMAN:
-                fig.add_trace(go.Scatter(x=tr["t"], y=tr["f_pred"], mode="lines",
-                                         line=dict(color=C_PRED, width=1, dash="dash"),
-                                         name="Kalman Pred", showlegend=(dm == "Kalman-Only")),
-                              row=r, col=c)
-        fig.update_layout(
-            **PLOTLY_LAYOUT,
-            height=520,
-            legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Metrics table
-        rows = []
-        for dm, tr in results.items():
-            rows.append({
-                "Defense": dm,
-                "Time OOB (s)": tr["time_oob"],
-                "Max Dev (Hz)": round(tr["max_deviation"], 4),
-                "Det. Delay (steps)": tr["detection_delay"] if tr["detection_delay"] is not None else "—",
-                "Clean Distrust (%)": round(tr["clean_distrust_rate"], 2),
-                "Return (R2)": round(tr["episode_return"], 1),
-            })
-        df = pd.DataFrame(rows)
-
-        # Highlight best per numeric column
-        def highlight_best(s):
-            if s.dtype == object:
-                return [""] * len(s)
-            if s.name == "Return (R2)":
-                best = s.max()
-            else:
-                best = s.min()
-            return ["background: rgba(6,214,160,0.22); font-weight:700" if v == best else "" for v in s]
-
-        styled = df.style.apply(highlight_best, axis=0).format(precision=2)
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 3 – Results (from saved files)
-# ═══════════════════════════════════════════════════════════════════════════
-with tab3:
-    st.subheader("📈 Evaluation Results (from final_eval.py)")
-
-    results_dir = os.path.join(_ROOT_DIR, "results")
-    csv_path = os.path.join(results_dir, "final_results.csv")
-    ws_csv   = os.path.join(results_dir, "widespoof_fair.csv")
-    summary_path = os.path.join(results_dir, "final_summary.md")
-    ws_md    = os.path.join(results_dir, "widespoof_fair.md")
-
-    # ---------- Load final_results.csv ----------
-    if os.path.exists(csv_path):
-        df_all = pd.read_csv(csv_path)
-
-        # Hide Oracle from the UI
-        if "method" in df_all.columns:
-            df_all = df_all[~df_all["method"].str.contains(
-                "Oracle", case=False, na=False)]
-
-        # Rename delay/dos → telemetry_freeze for display
-        if "attack_type" in df_all.columns:
-            df_all["attack_label"] = df_all["attack_type"].replace({
-                "delay": "telemetry_freeze (delay)",
-                "dos":   "telemetry_freeze (dos)",
-            })
-
-        # --- Bar chart: OOB per attack per method ---
-        st.markdown("### Time Outside Safe Band by Attack & Defense")
-
-        # Aggregate
-        if "method" in df_all.columns and "time_outside_safe_band" in df_all.columns:
-            agg = (df_all.groupby(["method", "attack_label"])["time_outside_safe_band"]
-                   .agg(["mean", "std"]).reset_index())
-            agg.columns = ["method", "attack", "mean_oob", "std_oob"]
-            agg["std_oob"] = agg["std_oob"].fillna(0)
-
-            attacks = agg["attack"].unique()
-            methods = agg["method"].unique()
-
-            palette = [
-                "#ef6c1a", "#dc2626", "#e0a000", "#0d9488",
-                "#b45309", "#9a3412", "#f97316", "#c2410c",
-                "#15935f", "#e11d48",
-            ]
-
-            fig_bar = go.Figure()
-            for mi, method in enumerate(methods):
-                sub = agg[agg["method"] == method]
-                fig_bar.add_trace(go.Bar(
-                    name=method,
-                    x=sub["attack"],
-                    y=sub["mean_oob"],
-                    error_y=dict(type="data", array=sub["std_oob"], visible=True),
-                    marker_color=palette[mi % len(palette)],
-                ))
-            fig_bar.update_layout(
-                **PLOTLY_LAYOUT,
-                barmode="group",
-                height=460,
-                xaxis_title="Attack Type",
-                yaxis_title="Mean Time OOB (s)",
-                legend=dict(font=dict(size=10)),
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            st.warning("CSV columns not in expected format.")
-
-        # --- Per-seed RL table ---
-        st.markdown("### RL DQN Per-Seed Breakdown (Time OOB in seconds)")
-        rl_mask = df_all["method"].str.contains("DQN", case=False, na=False)
-        if rl_mask.any():
-            rl_df = df_all[rl_mask]
-            if "seed" in rl_df.columns or "model_seed" in rl_df.columns:
-                seed_col = "model_seed" if "model_seed" in rl_df.columns else "seed"
-                pivot = (rl_df.groupby([seed_col, "attack_label"])["time_outside_safe_band"]
-                         .mean().unstack(fill_value=0).round(2))
-                st.dataframe(pivot, use_container_width=True)
-            else:
-                st.info("Seed column not found; showing aggregate.")
-                st.dataframe(rl_df.head(20))
-
-        # --- RL vs Detector-Timing vs Kalman-Only comparison ---
-        st.markdown("### RL vs Detector-Timing vs Kalman-Only")
-        compare_methods = ["RL (DQN R2", "Detector-Threshold-Timing", "Kalman-Only"]
-        mask = df_all["method"].apply(
-            lambda m: any(cm in str(m) for cm in compare_methods)
-        )
-        if mask.any():
-            comp_df = df_all[mask]
-            comp_agg = (comp_df.groupby(["method", "attack_label"])["time_outside_safe_band"]
-                        .agg(["mean", "std"]).reset_index())
-            comp_agg.columns = ["method", "attack", "mean_oob", "std_oob"]
-            comp_agg["std_oob"] = comp_agg["std_oob"].fillna(0)
-
-            fig_comp = go.Figure()
-            comp_palette = {"Kalman": "#0d9488", "Detector": "#e0a000", "RL": "#ef6c1a"}
-            for method in comp_agg["method"].unique():
-                sub = comp_agg[comp_agg["method"] == method]
-                col = "#ef6c1a"
-                for k, v in comp_palette.items():
-                    if k in method:
-                        col = v
-                        break
-                fig_comp.add_trace(go.Bar(
-                    name=method, x=sub["attack"], y=sub["mean_oob"],
-                    error_y=dict(type="data", array=sub["std_oob"], visible=True),
-                    marker_color=col,
-                ))
-            fig_comp.update_layout(
-                **PLOTLY_LAYOUT, barmode="group", height=400,
-                xaxis_title="Attack Type", yaxis_title="Mean OOB (s)",
-            )
-            st.plotly_chart(fig_comp, use_container_width=True)
-
-    else:
-        st.warning(f"Results file not found: `{csv_path}`")
-
-    # ---------- Widespoof fair results ----------
-    if os.path.exists(ws_md):
-        with st.expander("📄 Widened-Spoof Fair Comparison (full report)"):
-            st.markdown(open(ws_md, encoding="utf-8").read())
-
-    # ---------- Limitations ----------
-    st.markdown("### ⚠️ Known Limitations")
-    st.markdown("""
-<div class="limits-box">
-<ol>
-<li><b>RL does not beat Kalman-Only on spoof / stealthy drift.</b>  
-   The hand-crafted innovation-residual threshold detects abrupt or gradual spoofs
-   on the first anomalous sample, whereas the RL agent occasionally trusts a few
-   corrupt readings before reacting.</li>
-<li><b>A hand-tuned timing detector matches or beats RL on telemetry freeze.</b>  
-   Detector-Timing achieves <b>0.0 s OOB</b> across all freeze scenarios because
-   it directly inspects packet-age / duplicate flags, while the RL policy learned
-   a noisier proxy from the raw observation vector.</li>
-<li><b>RL is seed-sensitive and brittle outside its training range.</b>  
-   Per-seed OOB varies dramatically (Seed 0: 0.0 s, Seed 1: 11.66 s on spoof).
-   The widened-spoof experiment showed partial improvement but seeds can swap
-   winners unpredictably.</li>
-<li><b>Delay and DOS share one mechanism.</b>  
-   Both <code>delay</code> and <code>dos</code> attack types execute the same
-   stale-hold code path in <code>grid_env.py</code>; the configured latency / drop
-   parameters are never read by <code>step()</code>.</li>
-</ol>
+# ===================== 1. ANIMATED TITLE / LANDING =========================
+HERO = r"""
+<div id="hero">
+  <canvas id="bg"></canvas>
+  <div id="ov">
+    <div id="kick">INDUSTRIAL CYBER-PHYSICAL SECURITY</div>
+    <h1 id="title">POWER-GRID<br><span>CYBER-ATTACK</span> SIMULATION</h1>
+    <div id="sub">A reinforcement-learning defender against live sensor spoofing on a 50&nbsp;Hz grid</div>
+    <div id="scroll">scroll to run an attack &#8595;</div>
+  </div>
 </div>
-""", unsafe_allow_html=True)
+<style>
+  #hero{position:relative;width:100%;height:440px;border-radius:18px;overflow:hidden;
+    background:radial-gradient(120% 120% at 70% 10%,#14365a 0%,#0E2A47 55%,#081a30 100%);
+    font-family:Inter,-apple-system,Segoe UI,sans-serif;}
+  #bg{position:absolute;inset:0;width:100%;height:100%;display:block;}
+  #ov{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;
+    padding:0 7%;opacity:0;transform:translateY(14px);animation:rise 1.1s .15s forwards cubic-bezier(.2,.7,.3,1);}
+  #kick{color:#8fd0e8;font-size:.82rem;font-weight:700;letter-spacing:.34em;margin-bottom:12px;}
+  #title{margin:0;color:#fff;font-weight:900;line-height:1.02;letter-spacing:-.01em;
+    font-size:clamp(2.1rem,5.6vw,4.0rem);}
+  #title span{color:#F2E24B;}
+  #sub{margin-top:16px;color:#cfe4f0;font-size:clamp(.9rem,1.8vw,1.1rem);max-width:640px;}
+  #scroll{margin-top:26px;color:#8fd0e8;font-size:.82rem;font-weight:600;letter-spacing:.08em;
+    animation:bob 1.6s ease-in-out infinite;}
+  @keyframes rise{to{opacity:1;transform:none;}}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+</style>
+<script>
+(function(){
+  const cv=document.getElementById("bg"),c=cv.getContext("2d");
+  let W,H,dpr=Math.max(1,window.devicePixelRatio||1);
+  function size(){W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;c.setTransform(dpr,0,0,dpr,0,0);}
+  size();window.addEventListener("resize",size);
+  const waves=[{a:14,k:0.012,s:0.6,y:.52,col:"rgba(63,142,176,.55)",w:2},
+               {a:22,k:0.008,s:0.9,y:.6,col:"rgba(143,208,232,.35)",w:1.5},
+               {a:10,k:0.02,s:1.4,y:.46,col:"rgba(242,226,75,.18)",w:1.5}];
+  const pk=[]; for(let i=0;i<8;i++)pk.push({x:Math.random(),y:.4+Math.random()*.3,
+    v:.03+Math.random()*.05,red:Math.random()<.22});
+  let ph=0;
+  function frame(){ c.clearRect(0,0,W,H);
+    ph+=0.016;
+    for(const wv of waves){ c.beginPath();
+      for(let x=0;x<=W;x+=6){const y=H*wv.y+Math.sin(x*wv.k+ph*wv.s)*wv.a
+        +Math.sin(x*wv.k*0.5+ph*wv.s*1.4)*wv.a*0.4;
+        x?c.lineTo(x,y):c.moveTo(x,y);}
+      c.strokeStyle=wv.col;c.lineWidth=wv.w;c.stroke(); }
+    for(const p of pk){ p.x+=p.v*0.004; if(p.x>1.04){p.x=-.04;p.red=Math.random()<.22;}
+      const px=p.x*W, py=H*p.y+Math.sin(px*0.012+ph*0.6)*14;
+      c.beginPath();c.arc(px,py,p.red?3.4:2.6,0,7);
+      c.fillStyle=p.red?"#E0523F":"#9fe0f4";c.shadowColor=c.fillStyle;c.shadowBlur=10;c.fill();c.shadowBlur=0; }
+    requestAnimationFrame(frame); }
+  frame();
+})();
+</script>
+"""
+components.html(HERO, height=452, scrolling=False)
+
+# ============================ 2. CONTROLS ==================================
+st.markdown('<div class="sec-t">Configure the attack</div>', unsafe_allow_html=True)
+st.markdown('<div class="sec-s">Pick the attack, its strength, and when it begins. '
+            'All five defenses run automatically on the real grid model.</div>',
+            unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
+with c1:
+    attack_label = st.selectbox("Attack", list(ATTACKS.keys()), index=0)
+key, int_label, lo, hi, dflt, step, fmt = ATTACKS[attack_label]
+with c2:
+    if int_label is not None:
+        intensity = st.slider(int_label, float(lo), float(hi), float(dflt), float(step), format=fmt)
+    else:
+        intensity = None
+        st.markdown("<div style='padding-top:30px;color:#8aa6b5;font-size:.86rem'>"
+                    "Telemetry freeze holds the last valid reading &mdash; no strength to set.</div>",
+                    unsafe_allow_html=True)
+with c3:
+    attack_start = st.slider("Attack starts at (s)", 5.0, 40.0, 15.0, 1.0)
+
+# ------- run all five defenses (cached) -------
+@st.cache_data(show_spinner=False)
+def run_all(attack_key, intensity, attack_start):
+    series, t, start, end = {}, None, attack_start, attack_start
+    for m in DEFENSE_METHODS:
+        r = run_episode(attack_key, m, env_seed=ENV_SEED, intensity=intensity,
+                        attack_start=attack_start, dqn_seed=DQN_SEED)
+        series[m] = [float(x) for x in r["f_true"]]
+        if t is None:
+            t = [float(x) for x in r["t"]]
+            start = float(r["attack_start"])
+            aa = r["attack_active"]
+            idx = [i for i, v in enumerate(aa) if v]
+            end = float(t[idx[-1]]) if idx else start
+    return series, t, start, end
+
+with st.spinner("Simulating all five defenses on the real grid model…"):
+    series, t, start, end = run_all(key, intensity, attack_start)
+
+# ===================== 3. SIMULATION + GRAPH ===============================
+st.write("")
+st.markdown('<div class="sec-t">Live simulation</div>', unsafe_allow_html=True)
+if int_label is not None:
+    unit = int_label.split('(')[-1].rstrip(')')
+    scn = f"{attack_label} · {(fmt % intensity)} {unit} · onset {attack_start:.0f}s"
+else:
+    scn = f"{attack_label} · onset {attack_start:.0f}s"
+
+render_stage(series, t, start, end, scn, height=720)
+
+st.markdown("<div style='color:#8aa6b5;font-size:.82rem;margin-top:4px'>"
+            "Attacker injects packets over Modbus/TCP during the shaded window. "
+            "Safe band 49.80&ndash;50.20 Hz. Each line is the true grid frequency that defense held.</div>",
+            unsafe_allow_html=True)
